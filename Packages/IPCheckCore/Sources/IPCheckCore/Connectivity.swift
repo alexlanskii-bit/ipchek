@@ -87,7 +87,10 @@ public struct ConnectivitySnapshot: Equatable, Sendable {
 /// - после разрыва нужно `recoveryRounds` удачных раундов подряд, до этого — «проверяю»;
 /// - один регион не отвечает `failuresBeforeOutage` раз подряд — «частично»;
 /// - за последнюю минуту потери или средняя задержка выше порогов — «нестабильно»
-///   (судим, только когда проверок набралось не меньше `minimumChecksForQuality`).
+///   (судим, только когда проверок набралось не меньше `minimumChecksForQuality`);
+///   для «нестабильно по потерям» нужно ещё и не меньше `minimumLostChecksForInstability`
+///   потерянных проверок: одна-единственная неудача — это медленный запрос, а не плохая связь
+///   (иначе при запуске 1 неудача из 6 = 17 % давала ложную тревогу — найдено 2026-11-06).
 ///
 /// Потери — это случайные сбои. Неудачи, из которых сложился разрыв или «частично», в потери
 /// не идут: о них уже сказано. Свежие неудачи подряд, которые ещё могут оказаться разрывом,
@@ -96,12 +99,14 @@ public struct ConnectivityEvaluator: Sendable {
   public static let window: TimeInterval = 60
   public static let recoveryRounds = 2
   public static let minimumChecksForQuality = 6
+  public static let minimumLostChecksForInstability = 2
 
   public private(set) var snapshot = ConnectivitySnapshot()
 
   private var settings: MonitorSettings
   private var samples: [Sample] = []
   private var countedChecks = 0
+  private var countedLostChecks = 0
   private var failedRoundsInRow = 0
   private var goodRoundsInRow = 0
   private var regionFailuresInRow: [Region: Int] = [:]
@@ -238,6 +243,7 @@ public struct ConnectivityEvaluator: Sendable {
       }
     }
     countedChecks = counted
+    countedLostChecks = failed
     snapshot.latencyMs =
       latencies.isEmpty
       ? nil : Int((Double(latencies.reduce(0, +)) / Double(latencies.count)).rounded())
@@ -253,7 +259,9 @@ public struct ConnectivityEvaluator: Sendable {
       }
     }
     guard countedChecks >= Self.minimumChecksForQuality else { return .online }
-    if let loss = snapshot.lossPercent, loss > settings.unstableLossPercent {
+    if let loss = snapshot.lossPercent, loss > settings.unstableLossPercent,
+      countedLostChecks >= Self.minimumLostChecksForInstability
+    {
       return .unstable(.packetLoss(percent: loss, threshold: settings.unstableLossPercent))
     }
     if let latency = snapshot.latencyMs, latency > settings.unstableLatencyMs {

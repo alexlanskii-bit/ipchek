@@ -205,6 +205,35 @@ struct ConnectivityEvaluatorTests {
     #expect(snapshot.state == .online)
   }
 
+  @Test("Одна потерянная проверка — не нестабильность, даже сразу после запуска")
+  func singleLostCheckIsNotInstability() {
+    // Как было 2026-11-06 в 21:30: самый первый запрос не дождался ответа, остальные прошли.
+    // 1 из 6 проверок — 17 %, но это один медленный запрос, а не нестабильная связь.
+    var evaluator = ConnectivityEvaluator(settings: passportDefaults)
+    evaluator.linkChanged(to: .wifi, at: at(0))
+
+    evaluator.record(round(5, fast, down))
+    evaluator.record(round(10, fast, fast))
+    let snapshot = evaluator.record(round(15, fast, fast))
+
+    #expect(snapshot.lossPercent == 17)
+    #expect(snapshot.state == .online)
+  }
+
+  @Test("Две потерянные проверки и потери выше порога — нестабильно")
+  func twoLostChecksAboveThresholdIsInstability() {
+    var evaluator = ConnectivityEvaluator(settings: passportDefaults)
+    evaluator.linkChanged(to: .wifi, at: at(0))
+
+    evaluator.record(round(5, fast, down))
+    evaluator.record(round(10, fast, fast))
+    evaluator.record(round(15, fast, down))
+    let snapshot = evaluator.record(round(20, fast, fast))
+
+    #expect(snapshot.lossPercent == 25)  // 2 из 8
+    #expect(snapshot.state == .unstable(.packetLoss(percent: 25, threshold: 10)))
+  }
+
   @Test("Пока проверок мало, о качестве не судим")
   func tooFewChecksToJudgeQuality() {
     var evaluator = ConnectivityEvaluator(settings: passportDefaults)
