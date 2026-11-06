@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import IPCheckCore
 import Observation
@@ -7,7 +8,8 @@ import UserNotifications
 @MainActor
 @Observable
 final class AppModel {
-  private(set) var settings: MonitorSettings
+  let settings: MonitorSettings
+  let connectivity: ConnectivityMonitor
   private(set) var notificationStatus: NotificationPermission = .notDetermined
   private(set) var isSendingTest = false
   private(set) var lastTestResult: String?
@@ -16,19 +18,38 @@ final class AppModel {
   /// Центр уведомлений хранит делегата слабой ссылкой, поэтому держим его здесь.
   private let presenter = NotificationPresenter()
 
+  /// Раздел «Уведомления» Системных настроек. Идентификатор и разрешение на такие ссылки
+  /// (`allowsXAppleSystemPreferencesURLScheme`) сверены по NotificationsSettings.appex в macOS 26.2.
+  private static let notificationSettingsURL = URL(
+    string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+
   init() {
     settings = Self.loadSettings()
+    connectivity = ConnectivityMonitor(settings: settings)
     UNUserNotificationCenter.current().delegate = presenter
+    connectivity.start()
     Task { await requestNotificationPermission() }
   }
+
+  var notificationsAllowed: Bool { notificationStatus == .allowed }
 
   var notificationStatusText: String {
     switch notificationStatus {
     case .notDetermined: "Уведомления: ждём вашего ответа"
-    case .allowed: "Уведомления: разрешены"
-    case .denied: "Уведомления: запрещены — включите в Системных настройках"
-    case .unavailable: "Уведомления: macOS не даёт их включить"
+    case .allowed: "Уведомления разрешены"
+    case .denied: "Уведомления запрещены"
+    case .unavailable: "macOS не даёт включить уведомления"
     }
+  }
+
+  /// Человек мог поменять разрешение в Системных настройках — перечитываем при открытии панели.
+  func refreshNotificationStatus() {
+    Task { notificationStatus = await notifications.currentStatus() }
+  }
+
+  func openNotificationSettings() {
+    guard let url = Self.notificationSettingsURL else { return }
+    NSWorkspace.shared.open(url)
   }
 
   func sendTestNotification() {
@@ -39,12 +60,13 @@ final class AppModel {
       notificationStatus = await notifications.currentStatus()
       guard notificationStatus == .allowed else {
         lastTestResult = "Не отправлено: уведомления не разрешены"
+        Log.notifications.notice("Тестовое уведомление не отправлено: уведомления не разрешены")
         return
       }
       do {
         try await notifications.sendTest()
         lastTestResult = "Тестовое уведомление отправлено"
-        Log.notifications.info("Тестовое уведомление отправлено")
+        Log.notifications.notice("Тестовое уведомление отправлено")
       } catch {
         lastTestResult = "Не удалось отправить уведомление"
         Log.notifications.error(
@@ -58,7 +80,7 @@ final class AppModel {
     notificationStatus = status
     switch status {
     case .allowed:
-      Log.notifications.info("Уведомления разрешены")
+      Log.notifications.notice("Уведомления разрешены")
     case .denied, .notDetermined:
       Log.notifications.notice("Уведомления не разрешены")
     case .unavailable(let reason):

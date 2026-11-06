@@ -14,4 +14,5 @@ enum AppInfo {
 enum Log {
   static let settings = Logger(subsystem: AppInfo.subsystem, category: "settings")
   static let notifications = Logger(subsystem: AppInfo.subsystem, category: "notifications")
+  static let connectivity = Logger(subsystem: AppInfo.subsystem, category: "connectivity")
 }

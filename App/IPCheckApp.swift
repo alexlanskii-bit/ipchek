@@ -1,3 +1,4 @@
+import IPCheckCore
 import SwiftUI
 
 @main
@@ -5,10 +6,15 @@ struct IPCheckApp: App {
   @State private var model = AppModel()
 
   var body: some Scene {
-    // Название — подпись значка для VoiceOver. Цвет и форма по состоянию сети — этап 2.
-    MenuBarExtra("IPCHEK", systemImage: "network") {
-      MenuContent(model: model)
+    MenuBarExtra {
+      StatusPanel(model: model)
+    } label: {
+      let snapshot = model.connectivity.snapshot
+      // Описание — для VoiceOver: «IPCHEK: Интернет работает».
+      MenuBarIcon(
+        state: snapshot.state,
+        description: "IPCHEK: " + StatusText.title(snapshot, now: .now))
     }
-    .menuBarExtraStyle(.menu)
+    .menuBarExtraStyle(.window)
   }
 }

@@ -6,10 +6,10 @@ PROJECT := IPCHEK.xcodeproj
 SCHEME := IPCHEK
 DERIVED := build/DerivedData
 PKG := Packages/IPCheckCore
-FORMAT_PATHS := App $(PKG)/Sources $(PKG)/Tests $(PKG)/Package.swift
+FORMAT_PATHS := App $(PKG)/Sources $(PKG)/Tests $(PKG)/Package.swift scripts
 XCODEBUILD := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -derivedDataPath $(DERIVED) -destination 'platform=macOS,arch=arm64' -quiet
 
-.PHONY: help project lint format test build build-release run verify hooks clean
+.PHONY: help project lint format test build build-release run verify hooks icon clean
 
 help: ## Показать команды
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-14s %s\n", $$1, $$2}'
@@ -42,6 +42,9 @@ verify: lint test build build-release ## Все проверки: оформле
 hooks: ## Включить проверку перед каждым коммитом
 	@git config core.hooksPath scripts/git-hooks
 	@echo "Проверка перед коммитом включена (scripts/git-hooks/pre-commit)"
+
+icon: ## Перерисовать значок приложения (scripts/make-app-icon.swift)
+	@xcrun --sdk macosx swift scripts/make-app-icon.swift App/Assets.xcassets/AppIcon.appiconset
 
 clean: ## Удалить сборки и сгенерированный проект
 	@rm -rf build $(PROJECT) $(PKG)/.build
