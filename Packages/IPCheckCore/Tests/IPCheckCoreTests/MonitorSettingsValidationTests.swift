@@ -78,6 +78,7 @@ struct MonitorSettingsValidationTests {
       TypeCase(.unstableLatencyMs, .unsupported("строка")),
       TypeCase(.soundEnabled, .int(0)),
       TypeCase(.soundEnabled, .unsupported("дробное число")),
+      TypeCase(.notifyUnstable, .int(0)),
     ]
   )
   func wrongTypeFallsBackToDefault(_ example: TypeCase) {
@@ -86,6 +87,42 @@ struct MonitorSettingsValidationTests {
     #expect(result.settings == passportDefaults)
     #expect(result.issues.map(\.key) == [example.key])
     #expect(result.issues.allSatisfy { if case .wrongType = $0.problem { true } else { false } })
+  }
+
+  @Test("Выключенные уведомления о нестабильной связи сохраняются")
+  func notifyUnstableOffIsKept() {
+    let result = MonitorSettings.validated(from: [.notifyUnstable: .bool(false)])
+
+    #expect(result.settings.notifyUnstable == false)
+    #expect(result.issues.isEmpty)
+  }
+
+  @Test("Окно настроек и проверка при запуске используют одни и те же диапазоны")
+  func allowedRanges() {
+    #expect(MonitorSettings.allowedRange(for: .checkIntervalSeconds) == 1...60)
+    #expect(MonitorSettings.allowedRange(for: .failuresBeforeOutage) == 1...10)
+    #expect(MonitorSettings.allowedRange(for: .unstableLatencyMs) == 50...5000)
+    #expect(MonitorSettings.allowedRange(for: .unstableLossPercent) == 1...100)
+    #expect(MonitorSettings.allowedRange(for: .wakeGraceSeconds) == 0...300)
+    #expect(MonitorSettings.allowedRange(for: .eventRetentionDays) == 1...3650)
+    #expect(MonitorSettings.allowedRange(for: .sampleRetentionDays) == 1...3650)
+    #expect(MonitorSettings.allowedRange(for: .soundEnabled) == nil)
+    #expect(MonitorSettings.allowedRange(for: .notifyUnstable) == nil)
+  }
+
+  @Test("Сохранённые настройки читаются обратно без изменений")
+  func storedValuesRoundTrip() {
+    let custom = MonitorSettings(
+      checkIntervalSeconds: 7, failuresBeforeOutage: 4, unstableLatencyMs: 450,
+      unstableLossPercent: 20, soundEnabled: false, notifyUnstable: false, wakeGraceSeconds: 45,
+      eventRetentionDays: 200, sampleRetentionDays: 30)
+
+    let stored = custom.asStoredValues
+    let result = MonitorSettings.validated(from: stored)
+
+    #expect(stored.count == SettingsKey.allCases.count)
+    #expect(result.settings == custom)
+    #expect(result.issues.isEmpty)
   }
 
   @Test("Несколько ошибок — каждая сообщается отдельно, правильные настройки не задеты")
@@ -114,6 +151,7 @@ let passportDefaults = MonitorSettings(
   unstableLatencyMs: 300,
   unstableLossPercent: 10,
   soundEnabled: true,
+  notifyUnstable: true,
   wakeGraceSeconds: 30,
   eventRetentionDays: 365,
   sampleRetentionDays: 90
@@ -170,6 +208,6 @@ func intValue(_ key: SettingsKey, in settings: MonitorSettings) -> Int? {
   case .wakeGraceSeconds: settings.wakeGraceSeconds
   case .eventRetentionDays: settings.eventRetentionDays
   case .sampleRetentionDays: settings.sampleRetentionDays
-  case .soundEnabled: nil
+  case .soundEnabled, .notifyUnstable: nil
   }
 }

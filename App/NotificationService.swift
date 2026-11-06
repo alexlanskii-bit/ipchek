@@ -37,6 +37,18 @@ struct NotificationService: Sendable {
     }
   }
 
+  /// Уведомление о событии связи. Тексты согласованы с владельцем (этап 3).
+  func post(_ event: ConnectivityEvent, sound: Bool) async throws {
+    let content = UNMutableNotificationContent()
+    content.title = NotificationText.title(event)
+    content.body = NotificationText.body(event)
+    content.threadIdentifier = "connectivity"
+    if sound { content.sound = .default }
+    let request = UNNotificationRequest(
+      identifier: "event-\(UUID().uuidString)", content: content, trigger: nil)
+    try await UNUserNotificationCenter.current().add(request)
+  }
+
   func sendTest() async throws {
     let content = UNMutableNotificationContent()
     content.title = "IPCHEK"

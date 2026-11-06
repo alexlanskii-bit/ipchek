@@ -11,7 +11,9 @@ final class ConnectivityMonitor {
   private(set) var snapshot = ConnectivitySnapshot()
 
   @ObservationIgnored private var evaluator: ConnectivityEvaluator
-  @ObservationIgnored private let settings: MonitorSettings
+  @ObservationIgnored private var settings: MonitorSettings
+  /// Вызывается при каждом обновлении состояния (для правил уведомлений).
+  @ObservationIgnored var onSnapshot: ((ConnectivitySnapshot) -> Void)?
   @ObservationIgnored private var isExpensive = false
   @ObservationIgnored private var roundRequested = false
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
@@ -19,6 +21,12 @@ final class ConnectivityMonitor {
   init(settings: MonitorSettings) {
     self.settings = settings
     evaluator = ConnectivityEvaluator(settings: settings)
+  }
+
+  /// Новые настройки действуют сразу: пороги — с текущей статистикой, частота — со следующей паузы.
+  func apply(settings newSettings: MonitorSettings) {
+    settings = newSettings
+    update(evaluator.update(settings: newSettings))
   }
 
   func start() {
@@ -81,6 +89,7 @@ final class ConnectivityMonitor {
       Log.connectivity.notice("Состояние связи: \(String(describing: new.state), privacy: .public)")
     }
     snapshot = new
+    onSnapshot?(new)
   }
 }
 

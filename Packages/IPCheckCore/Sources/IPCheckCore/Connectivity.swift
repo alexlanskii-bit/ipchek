@@ -99,7 +99,7 @@ public struct ConnectivityEvaluator: Sendable {
 
   public private(set) var snapshot = ConnectivitySnapshot()
 
-  private let settings: MonitorSettings
+  private var settings: MonitorSettings
   private var samples: [Sample] = []
   private var countedChecks = 0
   private var failedRoundsInRow = 0
@@ -118,6 +118,20 @@ public struct ConnectivityEvaluator: Sendable {
 
   public init(settings: MonitorSettings) {
     self.settings = settings
+  }
+
+  /// Новые настройки применяются сразу; накопленная статистика сохраняется.
+  @discardableResult
+  public mutating func update(settings newSettings: MonitorSettings) -> ConnectivitySnapshot {
+    settings = newSettings
+    updateQualityNumbers()
+    switch snapshot.state.kind {
+    case .online, .unstable, .partial:
+      setState(qualityState(), at: snapshot.updatedAt ?? .now)
+    case .checking, .offline:
+      break  // разрыв и проверка решаются следующими раундами
+    }
+    return snapshot
   }
 
   /// Были неудачи, но разрыв или «частично» ещё не решены — следующую проверку стоит сделать

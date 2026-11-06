@@ -16,5 +16,9 @@ struct IPCheckApp: App {
         description: "IPCHEK: " + StatusText.title(snapshot, now: .now))
     }
     .menuBarExtraStyle(.window)
+
+    Settings {
+      SettingsView(model: model)
+    }
   }
 }

@@ -5,6 +5,8 @@ public struct MonitorSettings: Equatable, Sendable {
   public var unstableLatencyMs: Int
   public var unstableLossPercent: Int
   public var soundEnabled: Bool
+  /// Уведомлять о нестабильной связи (не чаще раза в 10 минут).
+  public var notifyUnstable: Bool
   public var wakeGraceSeconds: Int
   public var eventRetentionDays: Int
   public var sampleRetentionDays: Int
@@ -15,6 +17,7 @@ public struct MonitorSettings: Equatable, Sendable {
     unstableLatencyMs: Int,
     unstableLossPercent: Int,
     soundEnabled: Bool,
+    notifyUnstable: Bool,
     wakeGraceSeconds: Int,
     eventRetentionDays: Int,
     sampleRetentionDays: Int
@@ -24,6 +27,7 @@ public struct MonitorSettings: Equatable, Sendable {
     self.unstableLatencyMs = unstableLatencyMs
     self.unstableLossPercent = unstableLossPercent
     self.soundEnabled = soundEnabled
+    self.notifyUnstable = notifyUnstable
     self.wakeGraceSeconds = wakeGraceSeconds
     self.eventRetentionDays = eventRetentionDays
     self.sampleRetentionDays = sampleRetentionDays
@@ -36,6 +40,7 @@ public struct MonitorSettings: Equatable, Sendable {
     unstableLatencyMs: 300,
     unstableLossPercent: 10,
     soundEnabled: true,
+    notifyUnstable: true,
     wakeGraceSeconds: 30,
     eventRetentionDays: 365,
     sampleRetentionDays: 90
@@ -49,6 +54,7 @@ public enum SettingsKey: String, CaseIterable, Sendable {
   case unstableLatencyMs
   case unstableLossPercent
   case soundEnabled
+  case notifyUnstable
   case wakeGraceSeconds
   case eventRetentionDays
   case sampleRetentionDays
@@ -101,7 +107,8 @@ extension MonitorSettings {
     let fallback = MonitorSettings.defaults
     var issues: [SettingsIssue] = []
 
-    func int(_ key: SettingsKey, _ allowed: ClosedRange<Int>, default value: Int) -> Int {
+    func int(_ key: SettingsKey, default value: Int) -> Int {
+      let allowed = allowedRange(for: key) ?? value...value
       switch stored[key] {
       case nil:
         return value
@@ -133,20 +140,46 @@ extension MonitorSettings {
     }
 
     let settings = MonitorSettings(
-      checkIntervalSeconds: int(
-        .checkIntervalSeconds, 1...60, default: fallback.checkIntervalSeconds),
-      failuresBeforeOutage: int(
-        .failuresBeforeOutage, 1...10, default: fallback.failuresBeforeOutage),
-      unstableLatencyMs: int(.unstableLatencyMs, 50...5000, default: fallback.unstableLatencyMs),
-      unstableLossPercent: int(
-        .unstableLossPercent, 1...100, default: fallback.unstableLossPercent),
+      checkIntervalSeconds: int(.checkIntervalSeconds, default: fallback.checkIntervalSeconds),
+      failuresBeforeOutage: int(.failuresBeforeOutage, default: fallback.failuresBeforeOutage),
+      unstableLatencyMs: int(.unstableLatencyMs, default: fallback.unstableLatencyMs),
+      unstableLossPercent: int(.unstableLossPercent, default: fallback.unstableLossPercent),
       soundEnabled: bool(.soundEnabled, default: fallback.soundEnabled),
-      wakeGraceSeconds: int(.wakeGraceSeconds, 0...300, default: fallback.wakeGraceSeconds),
-      eventRetentionDays: int(
-        .eventRetentionDays, 1...3650, default: fallback.eventRetentionDays),
-      sampleRetentionDays: int(
-        .sampleRetentionDays, 1...3650, default: fallback.sampleRetentionDays)
+      notifyUnstable: bool(.notifyUnstable, default: fallback.notifyUnstable),
+      wakeGraceSeconds: int(.wakeGraceSeconds, default: fallback.wakeGraceSeconds),
+      eventRetentionDays: int(.eventRetentionDays, default: fallback.eventRetentionDays),
+      sampleRetentionDays: int(.sampleRetentionDays, default: fallback.sampleRetentionDays)
     )
     return SettingsValidation(settings: settings, issues: issues)
+  }
+}
+
+extension MonitorSettings {
+  /// Допустимый диапазон числовой настройки; `nil` — настройка «вкл/выкл».
+  public static func allowedRange(for key: SettingsKey) -> ClosedRange<Int>? {
+    switch key {
+    case .checkIntervalSeconds: 1...60
+    case .failuresBeforeOutage: 1...10
+    case .unstableLatencyMs: 50...5000
+    case .unstableLossPercent: 1...100
+    case .wakeGraceSeconds: 0...300
+    case .eventRetentionDays, .sampleRetentionDays: 1...3650
+    case .soundEnabled, .notifyUnstable: nil
+    }
+  }
+
+  /// Настройки в виде значений для хранилища (обратная операция к `validated(from:)`).
+  public var asStoredValues: [SettingsKey: StoredValue] {
+    [
+      .checkIntervalSeconds: .int(checkIntervalSeconds),
+      .failuresBeforeOutage: .int(failuresBeforeOutage),
+      .unstableLatencyMs: .int(unstableLatencyMs),
+      .unstableLossPercent: .int(unstableLossPercent),
+      .soundEnabled: .bool(soundEnabled),
+      .notifyUnstable: .bool(notifyUnstable),
+      .wakeGraceSeconds: .int(wakeGraceSeconds),
+      .eventRetentionDays: .int(eventRetentionDays),
+      .sampleRetentionDays: .int(sampleRetentionDays),
+    ]
   }
 }

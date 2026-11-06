@@ -39,6 +39,22 @@ struct ConnectivityEvaluatorTests {
     #expect(!evaluator.needsConfirmation)
   }
 
+  @Test("Новые пороги из настроек применяются сразу, статистика не теряется")
+  func settingsUpdateAppliesImmediately() {
+    var evaluator = onlineEvaluator(latency: 250)
+    for second in [10.0, 15] {
+      evaluator.record(round(second, ms(250), ms(250)))
+    }
+    #expect(evaluator.snapshot.state == .online)
+
+    var stricter = passportDefaults
+    stricter.unstableLatencyMs = 200
+    let snapshot = evaluator.update(settings: stricter)
+
+    #expect(snapshot.state == .unstable(.highLatency(ms: 250, threshold: 200)))
+    #expect(snapshot.latencyMs == 250)
+  }
+
   @Test("Пропали Wi-Fi и кабель — сразу «нет интернета»")
   func noLinkIsOfflineImmediately() {
     var evaluator = onlineEvaluator()

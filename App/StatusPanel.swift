@@ -5,6 +5,7 @@ import SwiftUI
 /// Панель по клику на значок. Набросок согласован 2026-11-06 (этап 2).
 struct StatusPanel: View {
   let model: AppModel
+  @Environment(\.openSettings) private var openSettings
 
   var body: some View {
     let snapshot = model.connectivity.snapshot
@@ -109,9 +110,11 @@ struct StatusPanel: View {
       Button("История") {}
         .disabled(true)
         .help("Появится на этапе 6")
-      Button("Настройки") {}
-        .disabled(true)
-        .help("Появится на этапе 3")
+      Button("Настройки") {
+        // Приложение без значка в Dock: сначала выводим его вперёд, иначе окно откроется позади.
+        NSApp.activate()
+        openSettings()
+      }
       Spacer()
       Button("Выйти") { NSApplication.shared.terminate(nil) }
         .keyboardShortcut("q")

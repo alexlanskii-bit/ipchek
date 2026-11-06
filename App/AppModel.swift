@@ -8,13 +8,14 @@ import UserNotifications
 @MainActor
 @Observable
 final class AppModel {
-  let settings: MonitorSettings
+  private(set) var settings: MonitorSettings
   let connectivity: ConnectivityMonitor
   private(set) var notificationStatus: NotificationPermission = .notDetermined
   private(set) var isSendingTest = false
   private(set) var lastTestResult: String?
 
   private let notifications = NotificationService()
+  private var policy = NotificationPolicy()
   /// Центр уведомлений хранит делегата слабой ссылкой, поэтому держим его здесь.
   private let presenter = NotificationPresenter()
 
@@ -24,14 +25,72 @@ final class AppModel {
     string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")
 
   init() {
-    settings = Self.loadSettings()
-    connectivity = ConnectivityMonitor(settings: settings)
+    let loaded = Self.loadSettings()
+    settings = loaded
+    connectivity = ConnectivityMonitor(settings: loaded)
     UNUserNotificationCenter.current().delegate = presenter
+    connectivity.onSnapshot = { [weak self] snapshot in self?.handle(snapshot) }
     connectivity.start()
     Task { await requestNotificationPermission() }
   }
 
   var notificationsAllowed: Bool { notificationStatus == .allowed }
+
+  // MARK: - Настройки
+
+  /// Меняет одну настройку: проверка теми же правилами, что при запуске → сохранение → применение.
+  func change<Value>(_ keyPath: WritableKeyPath<MonitorSettings, Value>, to value: Value) {
+    var changed = settings
+    changed[keyPath: keyPath] = value
+    apply(changed)
+  }
+
+  func resetSettings() {
+    apply(.defaults)
+  }
+
+  private func apply(_ candidate: MonitorSettings) {
+    let validation = MonitorSettings.validated(from: candidate.asStoredValues)
+    for issue in validation.issues {
+      Log.settings.warning("\(issue.logDescription, privacy: .public)")
+    }
+    guard validation.settings != settings else { return }
+    settings = validation.settings
+    Self.save(settings)
+    connectivity.apply(settings: settings)
+    Log.settings.notice("Настройки изменены")
+  }
+
+  private static func save(_ settings: MonitorSettings) {
+    let defaults = UserDefaults.standard
+    for (key, value) in settings.asStoredValues {
+      switch value {
+      case .int(let number): defaults.set(number, forKey: key.rawValue)
+      case .bool(let flag): defaults.set(flag, forKey: key.rawValue)
+      case .unsupported: break  // asStoredValues такого не возвращает
+      }
+    }
+  }
+
+  // MARK: - Уведомления о связи
+
+  private func handle(_ snapshot: ConnectivitySnapshot) {
+    let events = policy.observe(snapshot, at: .now, notifyUnstable: settings.notifyUnstable)
+    guard !events.isEmpty else { return }
+    let sound = settings.soundEnabled
+    // Одна задача на все события — уведомления приходят в том же порядке.
+    Task {
+      for event in events {
+        Log.notifications.notice("Событие: \(String(describing: event), privacy: .public)")
+        do {
+          try await notifications.post(event, sound: sound)
+        } catch {
+          Log.notifications.error(
+            "Уведомление не отправлено: \(error.localizedDescription, privacy: .public)")
+        }
+      }
+    }
+  }
 
   var notificationStatusText: String {
     switch notificationStatus {
