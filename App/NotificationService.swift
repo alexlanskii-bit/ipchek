@@ -38,10 +38,10 @@ struct NotificationService: Sendable {
   }
 
   /// Уведомление о событии связи. Тексты согласованы с владельцем (этап 3).
-  func post(_ event: ConnectivityEvent, sound: Bool) async throws {
+  func post(_ text: NotificationText.Content, sound: Bool) async throws {
     let content = UNMutableNotificationContent()
-    content.title = NotificationText.title(event)
-    content.body = NotificationText.body(event)
+    content.title = text.title
+    content.body = text.body
     content.threadIdentifier = "connectivity"
     if sound { content.sound = .default }
     let request = UNNotificationRequest(

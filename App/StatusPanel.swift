@@ -6,6 +6,8 @@ import SwiftUI
 struct StatusPanel: View {
   let model: AppModel
   @Environment(\.openSettings) private var openSettings
+  /// Какой адрес только что скопирован — на 1,5 с вместо него показываем «Скопировано».
+  @State private var copied: String?
 
   var body: some View {
     let snapshot = model.connectivity.snapshot
@@ -14,7 +16,7 @@ struct StatusPanel: View {
       Divider()
       connectionRows(snapshot)
       Divider()
-      futureRows
+      addressRows
       Divider()
       notificationsRow
       Divider()
@@ -69,13 +71,55 @@ struct StatusPanel: View {
     }
   }
 
-  /// Строки, которые оживут на следующих этапах (решение владельца — показывать серыми).
-  private var futureRows: some View {
-    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
-      row("Локальный IP", "этап 4", muted: true)
-      row("Внешний IP · РФ / зарубеж", "этап 4", muted: true)
-      row("VPN", "этап 4", muted: true)
+  /// Адреса и VPN. По клику адрес копируется.
+  private var addressRows: some View {
+    let address = model.addresses.snapshot
+    let failed = model.addresses.failedRegions
+    return Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
+      copyableRow("Локальный IP", address.localIP)
+      copyableRow("Внешний IP · Россия", address.russiaIP, failed: failed.contains(.russia))
+      copyableRow("Внешний IP · зарубеж", address.abroadIP, failed: failed.contains(.abroad))
+      row(
+        "VPN", address.vpnInterface.map { "включён · \($0)" } ?? "выключен",
+        color: address.vpnInterface == nil ? Color.secondary : Color.green)
+      // Оживёт на этапе 5 (решение владельца — будущие строки показывать серыми).
       row("Сервер NL", "этап 5", muted: true)
+    }
+    .task(id: copied) {
+      guard copied != nil else { return }
+      do {
+        try await Task.sleep(for: .seconds(1.5))
+      } catch {
+        return  // панель закрыли — подсказка больше не нужна
+      }
+      copied = nil
+    }
+  }
+
+  private func copyableRow(_ label: String, _ value: String?, failed: Bool = false) -> some View {
+    GridRow {
+      Text(label)
+        .foregroundStyle(.secondary)
+      Group {
+        if let value {
+          Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(value, forType: .string)
+            copied = label
+          } label: {
+            Text(copied == label ? "Скопировано" : value)
+              .monospacedDigit()
+          }
+          .buttonStyle(.plain)
+          .help("Нажмите, чтобы скопировать")
+          .accessibilityLabel("\(label): \(value). Нажмите, чтобы скопировать")
+        } else {
+          Text(failed ? "не удалось узнать" : "—")
+            .foregroundStyle(.secondary)
+        }
+      }
+      .gridColumnAlignment(.trailing)
+      .frame(maxWidth: .infinity, alignment: .trailing)
     }
   }
 

@@ -20,11 +20,7 @@ public enum ProbeExpectation: Equatable, Sendable {
       guard status == 200, body.count <= 64, let text = String(data: body, encoding: .utf8) else {
         return false
       }
-      let address = text.trimmingCharacters(in: .whitespacesAndNewlines.union(["\""]))
-      let allowed = CharacterSet(charactersIn: "0123456789abcdefABCDEF.:")
-      return !address.isEmpty
-        && (address.contains(".") || address.contains(":"))
-        && address.unicodeScalars.allSatisfy(allowed.contains)
+      return IPAddressText.parse(text) != nil
     }
   }
 }

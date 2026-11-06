@@ -10,12 +10,14 @@ import UserNotifications
 final class AppModel {
   private(set) var settings: MonitorSettings
   let connectivity: ConnectivityMonitor
+  let addresses = AddressMonitor()
   private(set) var notificationStatus: NotificationPermission = .notDetermined
   private(set) var isSendingTest = false
   private(set) var lastTestResult: String?
 
   private let notifications = NotificationService()
   private var policy = NotificationPolicy()
+  private var addressPolicy = AddressPolicy()
   /// Центр уведомлений хранит делегата слабой ссылкой, поэтому держим его здесь.
   private let presenter = NotificationPresenter()
 
@@ -30,7 +32,10 @@ final class AppModel {
     connectivity = ConnectivityMonitor(settings: loaded)
     UNUserNotificationCenter.current().delegate = presenter
     connectivity.onSnapshot = { [weak self] snapshot in self?.handle(snapshot) }
+    addresses.preferredInterface = { [weak connectivity] in connectivity?.primaryInterface }
+    addresses.onSnapshot = { [weak self] snapshot in self?.handle(snapshot) }
     connectivity.start()
+    addresses.start()
     Task { await requestNotificationPermission() }
   }
 
@@ -75,15 +80,36 @@ final class AppModel {
   // MARK: - Уведомления о связи
 
   private func handle(_ snapshot: ConnectivitySnapshot) {
+    switch snapshot.state.kind {
+    case .online, .unstable, .partial: addresses.internetAvailable = true
+    case .offline: addresses.internetAvailable = false
+    case .checking: break
+    }
     let events = policy.observe(snapshot, at: .now, notifyUnstable: settings.notifyUnstable)
-    guard !events.isEmpty else { return }
+    for event in events {
+      Log.notifications.notice("Событие: \(String(describing: event), privacy: .public)")
+    }
+    post(events.map(NotificationText.content))
+  }
+
+  private func handle(_ snapshot: AddressSnapshot) {
+    let events = addressPolicy.observe(snapshot, at: .now)
+    for event in events {
+      // Без самих адресов: в журнал IP не пишем.
+      Log.notifications.notice(
+        "Событие: \(NotificationText.logDescription(event), privacy: .public)")
+    }
+    post(events.map(NotificationText.content))
+  }
+
+  /// Одна задача на все уведомления — они приходят в том же порядке.
+  private func post(_ contents: [NotificationText.Content]) {
+    guard !contents.isEmpty else { return }
     let sound = settings.soundEnabled
-    // Одна задача на все события — уведомления приходят в том же порядке.
     Task {
-      for event in events {
-        Log.notifications.notice("Событие: \(String(describing: event), privacy: .public)")
+      for content in contents {
         do {
-          try await notifications.post(event, sound: sound)
+          try await notifications.post(content, sound: sound)
         } catch {
           Log.notifications.error(
             "Уведомление не отправлено: \(error.localizedDescription, privacy: .public)")

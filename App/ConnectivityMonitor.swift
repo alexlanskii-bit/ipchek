@@ -14,6 +14,8 @@ final class ConnectivityMonitor {
   @ObservationIgnored private var settings: MonitorSettings
   /// Вызывается при каждом обновлении состояния (для правил уведомлений).
   @ObservationIgnored var onSnapshot: ((ConnectivitySnapshot) -> Void)?
+  /// Имя основного интерфейса (Wi-Fi или кабель), например «en0».
+  @ObservationIgnored private(set) var primaryInterface: String?
   @ObservationIgnored private var isExpensive = false
   @ObservationIgnored private var roundRequested = false
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
@@ -41,6 +43,8 @@ final class ConnectivityMonitor {
   private func watchLink() async {
     for await path in NWPathMonitor() {
       isExpensive = path.isExpensive
+      primaryInterface =
+        path.availableInterfaces.first { $0.type == .wifi || $0.type == .wiredEthernet }?.name
       let link = LinkStatus(path)
       if link != snapshot.link {
         Log.connectivity.notice(
