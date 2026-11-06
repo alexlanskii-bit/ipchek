@@ -16,6 +16,8 @@ final class ConnectivityMonitor {
   @ObservationIgnored var onSnapshot: ((ConnectivitySnapshot) -> Void)?
   /// Имя основного интерфейса (Wi-Fi или кабель), например «en0».
   @ObservationIgnored private(set) var primaryInterface: String?
+  /// Он же целиком — для проверок в обход VPN.
+  @ObservationIgnored private(set) var primaryNWInterface: NWInterface?
   @ObservationIgnored private var isExpensive = false
   @ObservationIgnored private var roundRequested = false
   @ObservationIgnored private var tasks: [Task<Void, Never>] = []
@@ -43,8 +45,10 @@ final class ConnectivityMonitor {
   private func watchLink() async {
     for await path in NWPathMonitor() {
       isExpensive = path.isExpensive
-      primaryInterface =
-        path.availableInterfaces.first { $0.type == .wifi || $0.type == .wiredEthernet }?.name
+      primaryNWInterface = path.availableInterfaces.first {
+        $0.type == .wifi || $0.type == .wiredEthernet
+      }
+      primaryInterface = primaryNWInterface?.name
       let link = LinkStatus(path)
       if link != snapshot.link {
         Log.connectivity.notice(

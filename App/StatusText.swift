@@ -58,6 +58,26 @@ enum StatusText {
     return name
   }
 
+  /// Строка «Сервер NL» в панели: текст и цвет.
+  static func server(_ snapshot: ServerSnapshot, configured: Bool, now: Date) -> (
+    text: String, color: NSColor
+  ) {
+    guard configured else { return ("не задан — впишите в настройках", .secondaryLabelColor) }
+    switch snapshot.status {
+    case .checking:
+      return ("проверяю…", .secondaryLabelColor)
+    case .reachable(let latency, let step):
+      return ("отвечает · \(latency) мс (\(step.label))", .systemGreen)
+    case .unreachable:
+      let since = snapshot.since.map {
+        " · " + DurationText.short(seconds: Int(now.timeIntervalSince($0)))
+      }
+      return ("не отвечает" + (since ?? ""), .systemRed)
+    case .unknown:
+      return ("нет интернета — не проверить", .secondaryLabelColor)
+    }
+  }
+
   // MARK: - Значок
 
   struct Icon {

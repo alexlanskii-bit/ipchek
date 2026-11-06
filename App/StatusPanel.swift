@@ -82,8 +82,9 @@ struct StatusPanel: View {
       row(
         "VPN", address.vpnInterface.map { "включён · \($0)" } ?? "выключен",
         color: address.vpnInterface == nil ? Color.secondary : Color.green)
-      // Оживёт на этапе 5 (решение владельца — будущие строки показывать серыми).
-      row("Сервер NL", "этап 5", muted: true)
+      let server = StatusText.server(
+        model.server.snapshot, configured: model.server.isConfigured, now: .now)
+      row("Сервер NL", server.text, color: Color(nsColor: server.color))
     }
     .task(id: copied) {
       guard copied != nil else { return }

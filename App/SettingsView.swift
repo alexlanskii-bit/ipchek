@@ -6,6 +6,9 @@ import SwiftUI
 /// Пределы значений — из `MonitorSettings.allowedRange`, те же, что проверяются при запуске.
 struct SettingsView: View {
   let model: AppModel
+  /// Адрес сервера сохраняется по кнопке или Return, а не по каждой букве.
+  @State private var hostDraft = ""
+  @State private var hostError: String?
 
   var body: some View {
     Form {
@@ -45,8 +48,40 @@ struct SettingsView: View {
         }
       }
 
+      Section("Сервер в Нидерландах") {
+        HStack {
+          TextField("Адрес", text: $hostDraft, prompt: Text("IP или имя сервера"))
+            .onSubmit(saveHost)
+          Button("Сохранить", action: saveHost)
+            .disabled(
+              hostDraft.trimmingCharacters(in: .whitespacesAndNewlines) == model.settings.serverHost
+            )
+        }
+        if let hostError {
+          Text(hostError)
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+        Picker("Проверка", selection: binding(\.serverCheck)) {
+          Text("Автоматически: порты 443 и 22").tag(ServerCheckMethod.auto)
+          Text("Только мой порт").tag(ServerCheckMethod.port)
+        }
+        if model.settings.serverCheck == .port {
+          TextField("Порт", value: binding(\.serverPort), format: .number.grouping(.never))
+        }
+        LabeledContent(
+          "Сейчас",
+          value: StatusText.server(
+            model.server.snapshot, configured: model.server.isConfigured, now: .now
+          ).text)
+        Text(
+          "Проверка идёт напрямую через Wi-Fi или кабель, в обход VPN. Адрес хранится только на этом Mac."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
       Section("Появится позже") {
-        LabeledContent("Сервер в Нидерландах", value: "этап 5")
         LabeledContent("Хранение истории", value: "этап 6")
         LabeledContent("Запуск при входе", value: "этап 7")
       }
@@ -55,15 +90,36 @@ struct SettingsView: View {
       HStack {
         Spacer()
         Button("Вернуть значения по умолчанию") { model.resetSettings() }
-          .disabled(model.settings == .defaults)
+          .disabled(model.settingsAreDefault)
+          .help("Адрес и способ проверки сервера не сбрасываются")
       }
     }
     .formStyle(.grouped)
     .frame(width: 440)
-    .onAppear { model.refreshNotificationStatus() }
+    .onAppear {
+      model.refreshNotificationStatus()
+      hostDraft = model.settings.serverHost
+    }
   }
 
   // MARK: - Помощники
+
+  private func saveHost() {
+    let trimmed = hostDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+      hostError = nil
+      model.change(\.serverHost, to: "")
+      return
+    }
+    guard let normalized = ServerAddress.normalize(trimmed) else {
+      hostError =
+        "Неверный адрес. Впишите IP (например, 203.0.113.5) или имя сервера (vpn.example.com)."
+      return
+    }
+    hostError = nil
+    hostDraft = normalized
+    model.change(\.serverHost, to: normalized)
+  }
 
   private func binding<Value>(_ keyPath: WritableKeyPath<MonitorSettings, Value>) -> Binding<Value>
   {

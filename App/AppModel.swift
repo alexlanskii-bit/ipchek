@@ -11,6 +11,7 @@ final class AppModel {
   private(set) var settings: MonitorSettings
   let connectivity: ConnectivityMonitor
   let addresses = AddressMonitor()
+  let server: ServerMonitor
   private(set) var notificationStatus: NotificationPermission = .notDetermined
   private(set) var isSendingTest = false
   private(set) var lastTestResult: String?
@@ -18,6 +19,7 @@ final class AppModel {
   private let notifications = NotificationService()
   private var policy = NotificationPolicy()
   private var addressPolicy = AddressPolicy()
+  private var serverPolicy = ServerPolicy()
   /// Центр уведомлений хранит делегата слабой ссылкой, поэтому держим его здесь.
   private let presenter = NotificationPresenter()
 
@@ -30,12 +32,17 @@ final class AppModel {
     let loaded = Self.loadSettings()
     settings = loaded
     connectivity = ConnectivityMonitor(settings: loaded)
+    server = ServerMonitor(settings: loaded)
     UNUserNotificationCenter.current().delegate = presenter
     connectivity.onSnapshot = { [weak self] snapshot in self?.handle(snapshot) }
     addresses.preferredInterface = { [weak connectivity] in connectivity?.primaryInterface }
     addresses.onSnapshot = { [weak self] snapshot in self?.handle(snapshot) }
+    server.directInterface = { [weak connectivity] in connectivity?.primaryNWInterface }
+    server.onSnapshot = { [weak self] snapshot in self?.handle(snapshot) }
+    server.onReset = { [weak self] in self?.serverPolicy = ServerPolicy() }
     connectivity.start()
     addresses.start()
+    server.start()
     Task { await requestNotificationPermission() }
   }
 
@@ -50,8 +57,20 @@ final class AppModel {
     apply(changed)
   }
 
+  /// Сброс параметров проверки и уведомлений. Адрес и способ проверки сервера сохраняются:
+  /// это не порог, который хочется вернуть, а данные, которые человек вписал сам.
   func resetSettings() {
-    apply(.defaults)
+    apply(defaultsKeepingServer)
+  }
+
+  var settingsAreDefault: Bool { settings == defaultsKeepingServer }
+
+  private var defaultsKeepingServer: MonitorSettings {
+    var reset = MonitorSettings.defaults
+    reset.serverHost = settings.serverHost
+    reset.serverCheck = settings.serverCheck
+    reset.serverPort = settings.serverPort
+    return reset
   }
 
   private func apply(_ candidate: MonitorSettings) {
@@ -63,6 +82,7 @@ final class AppModel {
     settings = validation.settings
     Self.save(settings)
     connectivity.apply(settings: settings)
+    server.apply(settings: settings)
     Log.settings.notice("Настройки изменены")
   }
 
@@ -72,6 +92,7 @@ final class AppModel {
       switch value {
       case .int(let number): defaults.set(number, forKey: key.rawValue)
       case .bool(let flag): defaults.set(flag, forKey: key.rawValue)
+      case .string(let text): defaults.set(text, forKey: key.rawValue)
       case .unsupported: break  // asStoredValues такого не возвращает
       }
     }
@@ -81,8 +102,12 @@ final class AppModel {
 
   private func handle(_ snapshot: ConnectivitySnapshot) {
     switch snapshot.state.kind {
-    case .online, .unstable, .partial: addresses.internetAvailable = true
-    case .offline: addresses.internetAvailable = false
+    case .online, .unstable, .partial:
+      addresses.internetAvailable = true
+      server.internetWorking = true
+    case .offline:
+      addresses.internetAvailable = false
+      server.internetWorking = false
     case .checking: break
     }
     let events = policy.observe(snapshot, at: .now, notifyUnstable: settings.notifyUnstable)
@@ -98,6 +123,14 @@ final class AppModel {
       // Без самих адресов: в журнал IP не пишем.
       Log.notifications.notice(
         "Событие: \(NotificationText.logDescription(event), privacy: .public)")
+    }
+    post(events.map(NotificationText.content))
+  }
+
+  private func handle(_ snapshot: ServerSnapshot) {
+    let events = serverPolicy.observe(snapshot, at: .now)
+    for event in events {
+      Log.notifications.notice("Событие: сервер — \(String(describing: event), privacy: .public)")
     }
     post(events.map(NotificationText.content))
   }

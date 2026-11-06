@@ -24,6 +24,19 @@ enum NotificationText {
     }
   }
 
+  static func content(_ event: ServerEvent) -> Content {
+    switch event {
+    case .down:
+      Content(
+        title: "Сервер NL не отвечает",
+        body: "Домашний интернет работает, а сервер молчит. VPN может не работать.")
+    case .up(let seconds):
+      Content(
+        title: "Сервер NL снова отвечает",
+        body: "Он молчал \(DurationText.short(seconds: seconds)).")
+    }
+  }
+
   /// Для журнала — без IP-адресов.
   static func logDescription(_ event: AddressEvent) -> String {
     switch event {

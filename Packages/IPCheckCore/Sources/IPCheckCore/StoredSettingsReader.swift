@@ -12,8 +12,8 @@ extension StoredValue {
       self = .int(integer)
     } else if value is NSNumber {
       self = .unsupported("дробное число")
-    } else if value is String {
-      self = .unsupported("строка")
+    } else if let text = value as? String {
+      self = .string(text)
     } else {
       self = .unsupported(String(describing: type(of: value)))
     }

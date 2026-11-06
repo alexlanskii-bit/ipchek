@@ -19,10 +19,15 @@ struct StoredSettingsReaderTests {
     #expect(StoredValue(propertyListValue: NSNumber(value: 300)) == .int(300))
   }
 
-  @Test("Дробное число и строка не подходят")
-  func fractionAndStringAreUnsupported() {
+  @Test("Дробное число не подходит")
+  func fractionIsUnsupported() {
     #expect(isUnsupported(StoredValue(propertyListValue: NSNumber(value: 2.5))))
-    #expect(isUnsupported(StoredValue(propertyListValue: "5")))
+  }
+
+  @Test("Строка остаётся строкой, а не превращается в число")
+  func stringStaysString() {
+    #expect(StoredValue(propertyListValue: "5") == .string("5"))
+    #expect(StoredValue(propertyListValue: "vpn.example.com") == .string("vpn.example.com"))
   }
 
   @Test("Читаются только известные ключи, отсутствующие пропускаются")
