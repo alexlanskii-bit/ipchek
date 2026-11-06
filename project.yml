@@ -1,0 +1,67 @@
+# Описание проекта Xcode. Сам проект (IPCHEK.xcodeproj) генерируется командой `make project`
+# и в git не хранится. Документация формата: XcodeGen 2.45.4, Docs/ProjectSpec.md.
+name: IPCHEK
+
+options:
+  minimumXcodeGenVersion: 2.45.4
+  developmentLanguage: ru
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+packages:
+  IPCheckCore:
+    path: Packages/IPCheckCore
+
+targets:
+  IPCHEK:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+    dependencies:
+      - package: IPCheckCore
+    settings:
+      base:
+        PRODUCT_NAME: IPCHEK
+        PRODUCT_BUNDLE_IDENTIFIER: com.lavmoviesstudio.ipchek
+        APP_DISPLAY_NAME: IPCHEK
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: $(APP_DISPLAY_NAME)
+        # Приложение живёт только в строке меню, без значка в Dock.
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        # Минимальные права: «песочница» и только исходящая сеть (см. файл).
+        CODE_SIGN_ENTITLEMENTS: App/IPCHEK.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        # Локальная подпись без Apple ID (решение — docs/DECISIONS.md).
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+      configs:
+        # Отладочная сборка — отдельное приложение со своими настройками и историей.
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.lavmoviesstudio.ipchek.dev
+          APP_DISPLAY_NAME: IPCHEK Dev
+        # В финальной сборке нет отладочного разрешения get-task-allow.
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+
+schemes:
+  IPCHEK:
+    build:
+      targets:
+        IPCHEK: all
+    run:
+      config: Debug
+    archive:
+      config: Release
