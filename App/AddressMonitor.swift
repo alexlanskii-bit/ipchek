@@ -1,5 +1,6 @@
 import Foundation
 import IPCheckCore
+import Network
 import Observation
 
 /// Раз в 5 секунд читает интерфейсы (локальный IP, VPN); внешний IP узнаёт раз в минуту
@@ -17,11 +18,16 @@ final class AddressMonitor {
   @ObservationIgnored var onSnapshot: ((AddressSnapshot) -> Void)?
   /// Имя основного интерфейса (Wi-Fi или кабель) — от слежения за связью.
   @ObservationIgnored var preferredInterface: () -> String? = { nil }
+  /// Wi-Fi или кабель целиком — чтобы узнать ваш IP напрямую, в обход VPN.
+  @ObservationIgnored var directInterface: () -> NWInterface? = { nil }
   /// Есть ли сейчас интернет: без него внешний IP не узнать, и старый показывать нельзя.
   @ObservationIgnored var internetAvailable = false {
     didSet { if internetAvailable && !oldValue { refreshRequested = true } }
   }
   @ObservationIgnored private var lastExternalRefresh: Date?
+  /// Когда в последний раз сменились VPN или локальный IP: после этого внешний IP узнаём
+  /// сразу и ещё раз, когда маршруты переключились (`AddressPlan.settleSeconds`).
+  @ObservationIgnored private var lastAddressChange: Date?
   /// Что службы сказали о стране каждого внешнего IP: тот же IP — раз в сутки (`CountryPlan`).
   @ObservationIgnored private var countryCache: [Region: CountryCacheEntry] = [:]
   @ObservationIgnored private var refreshRequested = false
@@ -44,6 +50,7 @@ final class AddressMonitor {
   }
 
   private func tick() async {
+    let now = Date.now
     let interfaces = InterfaceReader.addresses()
     var next = snapshot
     next.localIP = NetworkAddresses.localIPv4(in: interfaces, preferred: preferredInterface())
@@ -54,6 +61,8 @@ final class AddressMonitor {
       Log.address.notice(
         "VPN: \(next.vpnInterface ?? "выключен", privacy: .public)")
     }
+    if addressesChanged { lastAddressChange = now }
+    let direct = directInterface()
 
     if !internetAvailable {
       next.russiaIP = nil
@@ -62,12 +71,12 @@ final class AddressMonitor {
       next.abroadCountry = .unknown
     } else if refreshRequested
       || AddressPlan.needsExternalRefresh(
-        lastRefresh: lastExternalRefresh, now: .now, addressesChanged: addressesChanged)
+        lastRefresh: lastExternalRefresh, lastAddressChange: lastAddressChange, now: now)
     {
       refreshRequested = false
-      lastExternalRefresh = .now
-      async let russia = ExternalIPFetcher.fetch(.russia)
-      async let abroad = ExternalIPFetcher.fetch(.abroad)
+      lastExternalRefresh = now
+      async let russia = ExternalIPFetcher.fetch(.russia, direct: direct)
+      async let abroad = ExternalIPFetcher.fetch(.abroad, direct: direct)
       next.russiaIP = await russia
       next.abroadIP = await abroad
       failedRegions = Set(Region.allCases.filter { next.externalIP($0) == nil })
@@ -78,25 +87,28 @@ final class AddressMonitor {
     }
 
     if internetAvailable {
-      next.russiaCountry = await country(for: next.russiaIP, region: .russia)
-      next.abroadCountry = await country(for: next.abroadIP, region: .abroad)
+      await lookUpCountry(ips: next, direct: direct)
+      next.russiaCountry = CountryPlan.verdict(cached: countryCache[.russia], ip: next.russiaIP)
+      next.abroadCountry = CountryPlan.verdict(cached: countryCache[.abroad], ip: next.abroadIP)
     }
 
     if next != snapshot { snapshot = next }
     onSnapshot?(next)
   }
 
-  /// Страна IP из кэша; если IP новый, прошли сутки или в прошлый раз службы молчали — спросить.
-  private func country(for ip: String?, region: Region) async -> CountryVerdict {
-    guard let ip else { return .unknown }
-    if CountryPlan.needsLookup(cached: countryCache[region], ip: ip, now: .now) {
-      let verdict = await CountryFetcher.lookup(ip)
-      countryCache[region] = CountryCacheEntry(ip: ip, verdict: verdict, at: .now)
-      // Код страны — не адрес: его в журнал писать можно.
-      Log.address.info(
-        "Страна (\(region.rawValue, privacy: .public)): \(String(describing: verdict), privacy: .public)"
-      )
-    }
-    return countryCache[region]?.verdict ?? .unknown
+  /// Спрашивает страну одного IP, если пора (`CountryPlan.nextLookup`): IP новый, прошли сутки
+  /// или в прошлый раз службы молчали. Разные адреса — не ближе минуты друг к другу.
+  private func lookUpCountry(ips snapshot: AddressSnapshot, direct: NWInterface?) async {
+    var ips: [Region: String] = [:]
+    for region in Region.allCases { ips[region] = snapshot.externalIP(region) }
+    guard let region = CountryPlan.nextLookup(ips: ips, cache: countryCache, now: .now),
+      let ip = ips[region]
+    else { return }
+    let verdict = await CountryFetcher.lookup(ip, region: region, direct: direct)
+    countryCache[region] = CountryCacheEntry(ip: ip, verdict: verdict, at: .now)
+    // Код страны — не адрес: его в журнал писать можно.
+    Log.address.info(
+      "Страна (\(region.rawValue, privacy: .public)): \(String(describing: verdict), privacy: .public)"
+    )
   }
 }

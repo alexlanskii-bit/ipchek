@@ -69,6 +69,8 @@ public struct AddressPolicy: Sendable {
   private var pendingVPN: (active: Bool, since: Date)?
   /// Когда VPN в последний раз менялся по-настоящему (интерфейс пропал или появился).
   private var lastVPNChange: Date?
+  /// Какую страну назвало последнее уведомление о VPN и когда оно ушло.
+  private var vpnNotice: (country: String?, at: Date)?
   private var lastKnownIP: [Region: String] = [:]
   private var lastIPNotice: [Region: Date] = [:]
   private var lastKnownCountry: [Region: String] = [:]
@@ -111,7 +113,7 @@ public struct AddressPolicy: Sendable {
     if let country = verdict.effective {
       if let old = lastKnownCountry[region], old != country {
         countryChanged = true
-        if !isExplainedByVPN(at: time) {
+        if !isExplainedByVPN(at: time) || contradictsVPNNotice(country, region: region) {
           events.append(.countryChanged(region, from: old, to: country, ip: ip))
         }
       }
@@ -129,6 +131,15 @@ public struct AddressPolicy: Sendable {
   private func isExplainedByVPN(at time: Date) -> Bool {
     guard let change = lastVPNChange else { return false }
     return time.timeIntervalSince(change) < Self.vpnExplainsIPChangeSeconds
+  }
+
+  /// Уведомление об этом изменении VPN уже ушло и назвало другую страну (или никакую): например,
+  /// маршруты переключились позже, чем оно ушло. Верную страну сообщаем отдельно.
+  private func contradictsVPNNotice(_ country: String, region: Region) -> Bool {
+    guard region == .abroad, let notice = vpnNotice, let change = lastVPNChange,
+      notice.at >= change
+    else { return false }
+    return notice.country != country
   }
 
   private func isCooledDown(_ last: Date?, at time: Date) -> Bool {
@@ -156,6 +167,7 @@ public struct AddressPolicy: Sendable {
     confirmedVPN = active
     pendingVPN = nil
     let country = snapshot.abroadCountry.effective
+    vpnNotice = (country, time)
     if let interface { return .vpnOn(interface: interface, abroadCountry: country) }
     return .vpnOff(abroadCountry: country)
   }
@@ -180,19 +192,32 @@ public struct AddressPolicy: Sendable {
 
 /// Откуда и как часто узнавать внешний IP.
 ///
-/// Только HTTPS: по простому HTTP служба Яндекса через VPN владельца отвечала «127.0.0.1»
-/// (проверено 2026-11-06). Ответ сверяется строгим разбором `IPAddressText`.
+/// Только HTTPS. Ответ сверяется строгим разбором `IPAddressText` и должен быть публичным
+/// адресом (`IPAddressText.isPublic`).
 public enum AddressPlan {
   public static let refreshSeconds: TimeInterval = 60
+  /// После смены VPN или локального IP — ещё раз через 5 секунд: сразу после смены маршруты
+  /// могут быть ещё старыми, и служба назовёт прежний адрес.
+  public static let settleSeconds: TimeInterval = 5
+  /// Ваш IP напрямую (без VPN) — его видят российские сайты при раздельной настройке VPN.
+  /// Яндекс не годится: отдавал 127.0.0.1 даже напрямую (проверено 2026-11-06).
+  ///
+  /// Службы напрямую и через VPN — разные: одна служба не должна одновременно видеть запрос
+  /// с вашего адреса и с адреса VPN-сервера, иначе она может связать их. Общая — только последняя
+  /// запасная (Amazon): её спрашивают, лишь когда основная молчит.
   public static let russia = [
-    "https://ipv4-internet.yandex.net/api/v0/ip",
-    "https://yandex.ru/internet/api/v0/ip",
-  ]
-  public static let abroad = [
-    "https://api.ipify.org",
     "https://icanhazip.com",
     "https://checkip.amazonaws.com",
   ]
+  public static let abroad = [
+    "https://api.ipify.org",
+    "https://checkip.amazonaws.com",
+  ]
+
+  /// Узнавать ли IP напрямую через Wi-Fi/кабель, в обход VPN.
+  public static func isDirect(_ region: Region) -> Bool {
+    region == .russia
+  }
 
   public static func services(for region: Region) -> [String] {
     switch region {
@@ -201,11 +226,17 @@ public enum AddressPlan {
     }
   }
 
-  /// Пора ли узнавать внешний IP: впервые, раз в минуту или сразу после смены VPN/локального IP.
-  public static func needsExternalRefresh(lastRefresh: Date?, now: Date, addressesChanged: Bool)
+  /// Пора ли узнавать внешний IP: впервые, раз в минуту, сразу после смены VPN/локального IP
+  /// (`lastAddressChange`) и ещё раз через `settleSeconds` после неё.
+  public static func needsExternalRefresh(lastRefresh: Date?, lastAddressChange: Date?, now: Date)
     -> Bool
   {
     guard let lastRefresh else { return true }
-    return addressesChanged || now.timeIntervalSince(lastRefresh) >= refreshSeconds
+    if let change = lastAddressChange {
+      if lastRefresh < change { return true }
+      let settled = change.addingTimeInterval(settleSeconds)
+      if lastRefresh < settled && now >= settled { return true }
+    }
+    return now.timeIntervalSince(lastRefresh) >= refreshSeconds
   }
 }

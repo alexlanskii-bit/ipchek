@@ -89,10 +89,37 @@ public enum CountryPlan {
   /// Если в прошлый раз обе службы промолчали — повтор через 5 минут.
   public static let retryUnknownSeconds: TimeInterval = 300
 
+  /// Страну вашего IP и IP VPN-сервера спрашиваем не ближе минуты друг к другу: службы стран
+  /// общие, и два запроса с разных адресов в одну секунду легко связать.
+  public static let staggerSeconds: TimeInterval = 60
+  /// Сначала — страна зарубежного IP: её называет уведомление о VPN.
+  public static let lookupOrder: [Region] = [.abroad, .russia]
+
   public static func needsLookup(cached: CountryCacheEntry?, ip: String, now: Date) -> Bool {
     guard let cached, cached.ip == ip else { return true }
     let age = now.timeIntervalSince(cached.at)
     if cached.verdict == .unknown { return age >= retryUnknownSeconds }
     return age >= refreshSeconds
+  }
+
+  /// Что известно о стране `ip`: ответ служб, только если спрашивали именно об этом адресе.
+  public static func verdict(cached: CountryCacheEntry?, ip: String?) -> CountryVerdict {
+    guard let ip, let cached, cached.ip == ip else { return .unknown }
+    return cached.verdict
+  }
+
+  /// О стране какого региона спросить сейчас — не больше одного за раз. Регион ждёт, если другой
+  /// спрашивали меньше `staggerSeconds` назад; свой прошлый запрос не задерживает.
+  public static func nextLookup(
+    ips: [Region: String], cache: [Region: CountryCacheEntry], now: Date
+  ) -> Region? {
+    lookupOrder.first { region in
+      guard let ip = ips[region], needsLookup(cached: cache[region], ip: ip, now: now) else {
+        return false
+      }
+      return !cache.contains { other, entry in
+        other != region && now.timeIntervalSince(entry.at) < staggerSeconds
+      }
+    }
   }
 }

@@ -19,7 +19,7 @@ enum HTTPProbe {
     configuration.urlCache = nil
     configuration.httpCookieStorage = nil
     configuration.httpShouldSetCookies = false
-    configuration.httpAdditionalHeaders = ["User-Agent": "IPCHEK"]
+    configuration.httpAdditionalHeaders = ["User-Agent": ClientIdentity.userAgent]
     return URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
   }()
 
@@ -49,7 +49,7 @@ enum HTTPProbe {
 
 /// Переадресации не выполняем: страница входа в гостиничный Wi-Fi не должна сойти за ответ
 /// сервера. По документации URLSession, `nil` отдаёт сам ответ-переадресацию (код 3xx).
-private final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
   func urlSession(
     _ session: URLSession, task: URLSessionTask,
     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest

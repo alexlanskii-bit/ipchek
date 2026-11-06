@@ -1,49 +1,42 @@
 import Foundation
 import IPCheckCore
+import Network
 
 /// Узнаёт внешний IP у служб из `AddressPlan` (только HTTPS). Ответ сверяется строгим разбором:
-/// что угодно, кроме IP-адреса, считается «не удалось узнать».
+/// что угодно, кроме публичного IP-адреса, считается «не удалось узнать».
 enum ExternalIPFetcher {
-  static let timeoutSeconds: TimeInterval = 5
   /// Ответ служб — 7–40 байт; больше — точно не IP.
   static let maxBodyBytes = 64
 
-  private static let session: URLSession = {
-    let configuration = URLSessionConfiguration.ephemeral
-    configuration.timeoutIntervalForRequest = timeoutSeconds
-    configuration.timeoutIntervalForResource = timeoutSeconds
-    configuration.waitsForConnectivity = false
-    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-    configuration.urlCache = nil
-    configuration.httpCookieStorage = nil
-    configuration.httpShouldSetCookies = false
-    configuration.httpAdditionalHeaders = ["User-Agent": "IPCHEK"]
-    return URLSession(configuration: configuration)
-  }()
-
-  /// Внешний IP региона или `nil`, если ни одна служба не ответила адресом.
-  static func fetch(_ region: Region) async -> String? {
+  /// Внешний IP региона или `nil`, если ни одна служба не ответила публичным адресом.
+  /// Ваш IP (`AddressPlan.isDirect`) узнаётся напрямую через `direct` — Wi-Fi или кабель.
+  static func fetch(_ region: Region, direct: NWInterface?) async -> String? {
+    let route = AddressPlan.isDirect(region) ? direct : nil
+    if AddressPlan.isDirect(region) && route == nil { return nil }  // нет Wi-Fi/кабеля
     for service in AddressPlan.services(for: region) {
-      if let address = await fetch(from: service) { return address }
+      guard let url = URL(string: service) else { continue }
+      let response = await ServiceClient.get(url, direct: route, limit: maxBodyBytes, name: service)
+      if let address = address(in: response, from: service) { return address }
     }
     return nil
   }
 
-  private static func fetch(from service: String) async -> String? {
-    guard let url = URL(string: service) else { return nil }
-    do {
-      let (body, response) = try await session.data(from: url)
-      guard (response as? HTTPURLResponse)?.statusCode == 200, body.count <= maxBodyBytes,
-        let text = String(data: body, encoding: .utf8)
-      else {
-        Log.address.debug("\(service, privacy: .public): ответ не похож на IP")
-        return nil
-      }
-      return IPAddressText.parse(text)
-    } catch {
-      Log.address.debug(
-        "\(service, privacy: .public) не ответил: \(error.localizedDescription, privacy: .public)")
+  /// Адрес из ответа — только если это ровно один IP и он публичный.
+  private static func address(in response: (status: Int, body: Data)?, from service: String)
+    -> String?
+  {
+    guard let response, response.status == 200,
+      let text = String(data: response.body, encoding: .utf8),
+      let address = IPAddressText.parse(text)
+    else {
+      Log.address.debug("\(service, privacy: .public): ответ не похож на IP")
       return nil
     }
+    // Служебный адрес (127.x, 192.168.x, 100.64.x…) — не внешний IP (найдено 2026-11-06).
+    guard IPAddressText.isPublic(address) else {
+      Log.address.notice("\(service, privacy: .public): вернула служебный адрес — пропускаю")
+      return nil
+    }
+    return address
   }
 }

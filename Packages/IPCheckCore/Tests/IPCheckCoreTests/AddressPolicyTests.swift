@@ -147,6 +147,11 @@ private let start = Date(timeIntervalSince1970: 1_800_000_000)
 
 private func at(_ second: Double) -> Date { start.addingTimeInterval(second) }
 
+private func refresh(last: Double?, change: Double?, now: Double) -> Bool {
+  AddressPlan.needsExternalRefresh(
+    lastRefresh: last.map(at), lastAddressChange: change.map(at), now: at(now))
+}
+
 private func addr(
   vpn: String? = nil, russia: String? = nil, abroad: String? = nil,
   russiaCountry: CountryVerdict = .unknown, abroadCountry: CountryVerdict = .unknown
@@ -158,15 +163,31 @@ private func addr(
 
 @Suite("Когда узнавать внешний IP")
 struct AddressPlanTests {
-  @Test("Впервые, раз в минуту и сразу после смены VPN или локального IP")
+  @Test("Впервые и раз в минуту")
   func refreshSchedule() {
-    #expect(AddressPlan.needsExternalRefresh(lastRefresh: nil, now: at(0), addressesChanged: false))
-    #expect(
-      !AddressPlan.needsExternalRefresh(lastRefresh: at(0), now: at(59), addressesChanged: false))
-    #expect(
-      AddressPlan.needsExternalRefresh(lastRefresh: at(0), now: at(60), addressesChanged: false))
-    #expect(
-      AddressPlan.needsExternalRefresh(lastRefresh: at(0), now: at(5), addressesChanged: true))
+    #expect(refresh(last: nil, change: nil, now: 0))
+    #expect(!refresh(last: 0, change: nil, now: 59))
+    #expect(refresh(last: 0, change: nil, now: 60))
+  }
+
+  @Test("После смены VPN — сразу и ещё раз через 5 секунд, когда маршруты переключились")
+  func refreshAfterAddressChange() {
+    // VPN включился на 30-й секунде.
+    #expect(refresh(last: 0, change: 30, now: 30))
+    // Узнали сразу — повтор через 5 секунд, не раньше.
+    #expect(!refresh(last: 30, change: 30, now: 34))
+    #expect(refresh(last: 30, change: 30, now: 35))
+    // Повторили — дальше обычный порядок: раз в минуту.
+    #expect(!refresh(last: 35, change: 30, now: 40))
+    #expect(!refresh(last: 35, change: 30, now: 94))
+    #expect(refresh(last: 35, change: 30, now: 95))
+  }
+
+  @Test("Службы напрямую и через VPN разные: одна служба не получает оба запроса сразу")
+  func directAndVPNServicesDiffer() {
+    // Общей может быть только последняя запасная служба: её спросят, лишь если основная молчит.
+    #expect(Set(AddressPlan.russia.dropLast()).isDisjoint(with: AddressPlan.abroad))
+    #expect(Set(AddressPlan.abroad.dropLast()).isDisjoint(with: AddressPlan.russia))
   }
 
   @Test("У каждого региона не меньше двух служб, все по HTTPS")
@@ -177,6 +198,11 @@ struct AddressPlanTests {
       #expect(services.allSatisfy { URL(string: $0)?.scheme == "https" })
     }
     #expect(AddressPlan.services(for: .russia) == AddressPlan.russia)
+    // Ваш IP узнаётся напрямую (в обход VPN), зарубежный — обычным путём.
+    #expect(AddressPlan.isDirect(.russia))
+    #expect(!AddressPlan.isDirect(.abroad))
+    // Яндекс отдавал 127.0.0.1 даже напрямую (2026-11-06) — в списке его нет.
+    #expect(!AddressPlan.russia.contains { $0.contains("yandex") })
     #expect(AddressPlan.services(for: .abroad) == AddressPlan.abroad)
   }
 }
@@ -208,6 +234,78 @@ struct CountryPolicyTests {
 
     #expect(change.isEmpty)
     #expect(confirmed == [.vpnOff(abroadCountry: "RU")])
+  }
+
+  @Test("Маршруты переключились позже уведомления о VPN — верную страну сообщаем отдельно")
+  func countryCorrectedAfterVPNNotice() {
+    var policy = AddressPolicy()
+    _ = policy.observe(addr(vpn: nil, abroad: home, abroadCountry: .agreed("RU")), at: at(0))
+    _ = policy.observe(addr(vpn: "utun4", abroad: home, abroadCountry: .agreed("RU")), at: at(10))
+
+    let on = policy.observe(
+      addr(vpn: "utun4", abroad: home, abroadCountry: .agreed("RU")), at: at(20))
+    let corrected = policy.observe(
+      addr(vpn: "utun4", abroad: vpnExit, abroadCountry: .agreed("NL")), at: at(25))
+    let same = policy.observe(
+      addr(vpn: "utun4", abroad: vpnExit, abroadCountry: .agreed("NL")), at: at(30))
+
+    #expect(on == [.vpnOn(interface: "utun4", abroadCountry: "RU")])
+    #expect(corrected == [.countryChanged(.abroad, from: "RU", to: "NL", ip: vpnExit)])
+    #expect(same.isEmpty)
+  }
+
+  @Test("Уведомление о VPN ушло без страны — когда она станет известна, сообщаем")
+  func countryAfterVPNNoticeWithoutCountry() {
+    var policy = AddressPolicy()
+    _ = policy.observe(addr(vpn: nil, abroad: home, abroadCountry: .agreed("RU")), at: at(0))
+    _ = policy.observe(addr(vpn: "utun4"), at: at(10))
+
+    let on = policy.observe(addr(vpn: "utun4"), at: at(20))
+    let known = policy.observe(
+      addr(vpn: "utun4", abroad: vpnExit, abroadCountry: .agreed("NL")), at: at(30))
+
+    #expect(on == [.vpnOn(interface: "utun4", abroadCountry: nil)])
+    #expect(known == [.countryChanged(.abroad, from: "RU", to: "NL", ip: vpnExit)])
+  }
+
+  @Test("После уведомления о VPN страна сменилась ещё раз — сообщаем, это не объясняется VPN")
+  func countryChangeAfterVPNNotice() {
+    var policy = AddressPolicy()
+    _ = policy.observe(addr(vpn: nil, abroad: home, abroadCountry: .agreed("RU")), at: at(0))
+    _ = policy.observe(
+      addr(vpn: "utun4", abroad: vpnExit, abroadCountry: .agreed("NL")), at: at(10))
+    _ = policy.observe(
+      addr(vpn: "utun4", abroad: vpnExit, abroadCountry: .agreed("NL")), at: at(20))
+
+    let leak = policy.observe(
+      addr(vpn: "utun4", abroad: home, abroadCountry: .agreed("RU")), at: at(40))
+
+    #expect(leak == [.countryChanged(.abroad, from: "NL", to: "RU", ip: home)])
+  }
+
+  @Test("Уведомление о VPN называет зарубежную страну: к вашему IP оно не относится")
+  func vpnNoticeIsAboutAbroadOnly() {
+    var policy = AddressPolicy()
+    _ = policy.observe(
+      addr(
+        vpn: nil, russia: home, abroad: home, russiaCountry: .agreed("RU"),
+        abroadCountry: .agreed("RU")), at: at(0))
+    _ = policy.observe(
+      addr(
+        vpn: "utun4", russia: home, abroad: vpnExit, russiaCountry: .agreed("RU"),
+        abroadCountry: .agreed("NL")), at: at(10))
+    _ = policy.observe(
+      addr(
+        vpn: "utun4", russia: home, abroad: vpnExit, russiaCountry: .agreed("RU"),
+        abroadCountry: .agreed("NL")), at: at(20))
+
+    // Ваш IP рядом со сменой VPN — по-прежнему по общему правилу (объясняется VPN).
+    let events = policy.observe(
+      addr(
+        vpn: "utun4", russia: otherHome, abroad: vpnExit, russiaCountry: .agreed("BY"),
+        abroadCountry: .agreed("NL")), at: at(30))
+
+    #expect(events.isEmpty)
   }
 
   @Test("IP и страна сменились без участия VPN — одно уведомление о смене страны")

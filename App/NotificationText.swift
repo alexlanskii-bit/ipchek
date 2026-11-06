@@ -26,25 +26,27 @@ enum NotificationText {
     case .externalIPChanged(let region, let old, let new, let country):
       Content(
         title: "Внешний IP изменился",
-        body: "Для \(sites(region)) сайтов: \(old) → \(new)"
+        body: "\(route(region)): \(old) → \(new)"
           + (country.map { " (\(CountryText.flagName($0)))" } ?? "") + ".")
     case .countryChanged(let region, let old, let new, let ip):
       Content(
         title: "Страна внешнего IP изменилась",
-        body: "Для \(sites(region)) сайтов: \(CountryText.flagName(old)) → "
+        body: "\(route(region)): \(CountryText.flagName(old)) → "
           + "\(CountryText.flagName(new))" + (ip.map { " (IP \($0))" } ?? "") + ".")
     case .countryDisputed(let region, let first, let second, let ip):
       Content(
         title: "Службы не согласны о стране IP",
-        body: "Для \(sites(region)) сайтов" + (ip.map { " (IP \($0))" } ?? "") + ": "
+        body: "\(route(region))" + (ip.map { " (IP \($0))" } ?? "") + ": "
           + "\(CountryPlan.first.name) — \(CountryText.flagName(first)), "
           + "\(CountryPlan.second.name) — \(CountryText.flagName(second)). "
           + "Возможна подмена или ошибка базы.")
     }
   }
 
-  private static func sites(_ region: Region) -> String {
-    region == .russia ? "российских" : "зарубежных"
+  /// Для адресов `.russia` — ваш IP напрямую, без VPN (его видят российские сайты при раздельной
+  /// настройке VPN), `.abroad` — IP, который видят зарубежные сайты.
+  private static func route(_ region: Region) -> String {
+    region == .russia ? "Ваш IP напрямую (без VPN)" : "Для зарубежных сайтов"
   }
 
   static func content(_ event: ServerEvent) -> Content {

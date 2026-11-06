@@ -78,7 +78,7 @@ struct StatusPanel: View {
     return Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
       copyableRow("Локальный IP", address.localIP)
       copyableRow(
-        "Внешний IP · Россия", address.russiaIP, failed: failed.contains(.russia),
+        "Ваш IP · напрямую", address.russiaIP, failed: failed.contains(.russia),
         country: address.russiaCountry)
       copyableRow(
         "Внешний IP · зарубеж", address.abroadIP, failed: failed.contains(.abroad),

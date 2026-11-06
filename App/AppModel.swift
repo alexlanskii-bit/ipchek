@@ -36,6 +36,7 @@ final class AppModel {
     UNUserNotificationCenter.current().delegate = presenter
     connectivity.onSnapshot = { [weak self] snapshot in self?.handle(snapshot) }
     addresses.preferredInterface = { [weak connectivity] in connectivity?.primaryInterface }
+    addresses.directInterface = { [weak connectivity] in connectivity?.primaryNWInterface }
     addresses.onSnapshot = { [weak self] snapshot in self?.handle(snapshot) }
     server.directInterface = { [weak connectivity] in connectivity?.primaryNWInterface }
     server.onSnapshot = { [weak self] snapshot in self?.handle(snapshot) }

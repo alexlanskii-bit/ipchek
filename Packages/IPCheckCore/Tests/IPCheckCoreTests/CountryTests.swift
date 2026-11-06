@@ -70,7 +70,60 @@ struct CountryTests {
     #expect(!CountryPlan.needsLookup(cached: unknown, ip: ip, now: at(299)))
     #expect(CountryPlan.needsLookup(cached: unknown, ip: ip, now: at(300)))
   }
+
+  @Test("Страна показывается только для того IP, о котором спрашивали")
+  func verdictForCurrentIP() {
+    let known = CountryCacheEntry(ip: "203.0.113.5", verdict: .agreed("NL"), at: at(0))
+
+    #expect(CountryPlan.verdict(cached: known, ip: "203.0.113.5") == .agreed("NL"))
+    #expect(CountryPlan.verdict(cached: known, ip: "203.0.113.6") == .unknown)
+    #expect(CountryPlan.verdict(cached: known, ip: nil) == .unknown)
+    #expect(CountryPlan.verdict(cached: nil, ip: "203.0.113.5") == .unknown)
+  }
+
+  @Test("Сначала страна зарубежного IP, страна вашего — не раньше чем через минуту")
+  func lookupsAreSpreadOut() {
+    let ips: [Region: String] = [.russia: home, .abroad: vpnExit]
+    var cache: [Region: CountryCacheEntry] = [:]
+
+    #expect(CountryPlan.nextLookup(ips: ips, cache: cache, now: at(0)) == .abroad)
+    cache[.abroad] = CountryCacheEntry(ip: vpnExit, verdict: .agreed("NL"), at: at(1))
+    #expect(CountryPlan.nextLookup(ips: ips, cache: cache, now: at(60)) == nil)
+    #expect(CountryPlan.nextLookup(ips: ips, cache: cache, now: at(61)) == .russia)
+    cache[.russia] = CountryCacheEntry(ip: home, verdict: .agreed("RU"), at: at(62))
+    #expect(CountryPlan.nextLookup(ips: ips, cache: cache, now: at(200)) == nil)
+  }
+
+  @Test("Свой прошлый запрос не задерживает: сменился зарубежный IP — спрашиваем сразу")
+  func sameRegionIsNotDelayed() {
+    let cache: [Region: CountryCacheEntry] = [
+      .russia: CountryCacheEntry(ip: home, verdict: .agreed("RU"), at: at(0)),
+      .abroad: CountryCacheEntry(ip: home, verdict: .agreed("RU"), at: at(100)),
+    ]
+
+    let next = CountryPlan.nextLookup(
+      ips: [.russia: home, .abroad: vpnExit], cache: cache, now: at(110))
+
+    #expect(next == .abroad)
+  }
+
+  @Test("Без IP страну не спрашиваем; ждёт один регион — другой не задерживается")
+  func lookupSkipsBlockedAndMissing() {
+    #expect(CountryPlan.nextLookup(ips: [:], cache: [:], now: at(0)) == nil)
+    // Ваш IP спрашивали 10 секунд назад, а теперь сменились оба: зарубежный подождёт,
+    // а ваш спросим снова сразу.
+    let cache: [Region: CountryCacheEntry] = [
+      .russia: CountryCacheEntry(ip: home, verdict: .agreed("RU"), at: at(0))
+    ]
+    let next = CountryPlan.nextLookup(
+      ips: [.russia: "203.0.113.99", .abroad: vpnExit], cache: cache, now: at(10))
+
+    #expect(next == .russia)
+  }
 }
+
+private let home = "203.0.113.10"
+private let vpnExit = "198.51.100.7"
 
 private let start = Date(timeIntervalSince1970: 1_800_000_000)
 
