@@ -9,15 +9,21 @@ public struct AddressSnapshot: Equatable, Sendable {
   public var russiaIP: String?
   /// Внешний IP, каким его видят зарубежные сайты.
   public var abroadIP: String?
+  /// Страна российского и зарубежного внешнего IP — по двум службам со сверкой.
+  public var russiaCountry: CountryVerdict
+  public var abroadCountry: CountryVerdict
 
   public init(
     localIP: String? = nil, vpnInterface: String? = nil, russiaIP: String? = nil,
-    abroadIP: String? = nil
+    abroadIP: String? = nil, russiaCountry: CountryVerdict = .unknown,
+    abroadCountry: CountryVerdict = .unknown
   ) {
     self.localIP = localIP
     self.vpnInterface = vpnInterface
     self.russiaIP = russiaIP
     self.abroadIP = abroadIP
+    self.russiaCountry = russiaCountry
+    self.abroadCountry = abroadCountry
   }
 
   public func externalIP(_ region: Region) -> String? {
@@ -26,13 +32,26 @@ public struct AddressSnapshot: Equatable, Sendable {
     case .abroad: abroadIP
     }
   }
+
+  public func country(_ region: Region) -> CountryVerdict {
+    switch region {
+    case .russia: russiaCountry
+    case .abroad: abroadCountry
+    }
+  }
 }
 
 /// Событие об адресах, о котором стоит сообщить.
 public enum AddressEvent: Equatable, Sendable {
-  case vpnOn(interface: String)
-  case vpnOff
-  case externalIPChanged(Region, from: String, to: String)
+  /// `abroadCountry` — страна, которую теперь видят зарубежные сайты (если известна).
+  case vpnOn(interface: String, abroadCountry: String?)
+  case vpnOff(abroadCountry: String?)
+  /// IP сменился, страна прежняя (или неизвестна).
+  case externalIPChanged(Region, from: String, to: String, country: String?)
+  /// Сменилась страна внешнего IP (решение владельца — сообщать).
+  case countryChanged(Region, from: String, to: String, ip: String?)
+  /// Две службы назвали разные страны (решение владельца — сообщать).
+  case countryDisputed(Region, first: String, second: String, ip: String?)
 }
 
 /// Решает, о каких изменениях VPN и внешнего IP сообщать.
@@ -52,23 +71,73 @@ public struct AddressPolicy: Sendable {
   private var lastVPNChange: Date?
   private var lastKnownIP: [Region: String] = [:]
   private var lastIPNotice: [Region: Date] = [:]
+  private var lastKnownCountry: [Region: String] = [:]
+  /// Последний ответ служб о стране (кроме «неизвестно»): то же расхождение повторно не сообщаем.
+  private var lastVerdict: [Region: CountryVerdict] = [:]
+  private var lastDisputeNotice: [Region: Date] = [:]
 
   public init() {}
 
   public mutating func observe(_ snapshot: AddressSnapshot, at time: Date) -> [AddressEvent] {
     var events: [AddressEvent] = []
-    if let event = observeVPN(interface: snapshot.vpnInterface, at: time) {
+    if let event = observeVPN(snapshot, at: time) {
       events.append(event)
     }
     for region in Region.allCases {
-      if let event = observeIP(snapshot.externalIP(region), region: region, at: time) {
-        events.append(event)
-      }
+      events += observeRegion(snapshot, region: region, at: time)
     }
     return events
   }
 
-  private mutating func observeVPN(interface: String?, at time: Date) -> AddressEvent? {
+  /// Страна и IP одного региона. Смена страны важнее смены IP: если сменилось и то и другое,
+  /// приходит одно уведомление — о стране.
+  private mutating func observeRegion(_ snapshot: AddressSnapshot, region: Region, at time: Date)
+    -> [AddressEvent]
+  {
+    var events: [AddressEvent] = []
+    let ip = snapshot.externalIP(region)
+    let verdict = snapshot.country(region)
+
+    // Расхождение служб — сигнал проверить, а не смена: сообщаем даже сразу после запуска.
+    if case .disputed(let first, let second) = verdict, lastVerdict[region] != verdict,
+      isCooledDown(lastDisputeNotice[region], at: time)
+    {
+      lastDisputeNotice[region] = time
+      events.append(.countryDisputed(region, first: first, second: second, ip: ip))
+    }
+    if verdict != .unknown { lastVerdict[region] = verdict }
+
+    var countryChanged = false
+    if let country = verdict.effective {
+      if let old = lastKnownCountry[region], old != country {
+        countryChanged = true
+        if !isExplainedByVPN(at: time) {
+          events.append(.countryChanged(region, from: old, to: country, ip: ip))
+        }
+      }
+      lastKnownCountry[region] = country
+    }
+
+    if let event = observeIP(
+      ip, region: region, country: verdict.effective, silent: countryChanged, at: time)
+    {
+      events.append(event)
+    }
+    return events
+  }
+
+  private func isExplainedByVPN(at time: Date) -> Bool {
+    guard let change = lastVPNChange else { return false }
+    return time.timeIntervalSince(change) < Self.vpnExplainsIPChangeSeconds
+  }
+
+  private func isCooledDown(_ last: Date?, at time: Date) -> Bool {
+    guard let last else { return true }
+    return time.timeIntervalSince(last) >= Self.repeatCooldown
+  }
+
+  private mutating func observeVPN(_ snapshot: AddressSnapshot, at time: Date) -> AddressEvent? {
+    let interface = snapshot.vpnInterface
     let active = interface != nil
     guard let confirmed = confirmedVPN else {
       confirmedVPN = active  // первое наблюдение после запуска — без уведомления
@@ -86,11 +155,15 @@ public struct AddressPolicy: Sendable {
     guard time.timeIntervalSince(pending.since) >= Self.vpnStableSeconds else { return nil }
     confirmedVPN = active
     pendingVPN = nil
-    if let interface { return .vpnOn(interface: interface) }
-    return .vpnOff
+    let country = snapshot.abroadCountry.effective
+    if let interface { return .vpnOn(interface: interface, abroadCountry: country) }
+    return .vpnOff(abroadCountry: country)
   }
 
-  private mutating func observeIP(_ ip: String?, region: Region, at time: Date) -> AddressEvent? {
+  /// `silent` — об этой смене уже сказано уведомлением о стране.
+  private mutating func observeIP(
+    _ ip: String?, region: Region, country: String?, silent: Bool, at time: Date
+  ) -> AddressEvent? {
     guard let ip else { return nil }  // не удалось узнать — это не смена
     guard let old = lastKnownIP[region] else {
       lastKnownIP[region] = ip
@@ -98,16 +171,10 @@ public struct AddressPolicy: Sendable {
     }
     guard old != ip else { return nil }
     lastKnownIP[region] = ip
-    if let change = lastVPNChange,
-      time.timeIntervalSince(change) < Self.vpnExplainsIPChangeSeconds
-    {
-      return nil
-    }
-    if let last = lastIPNotice[region], time.timeIntervalSince(last) < Self.repeatCooldown {
-      return nil
-    }
+    guard !silent, !isExplainedByVPN(at: time), isCooledDown(lastIPNotice[region], at: time)
+    else { return nil }
     lastIPNotice[region] = time
-    return .externalIPChanged(region, from: old, to: ip)
+    return .externalIPChanged(region, from: old, to: ip, country: country)
   }
 }
 

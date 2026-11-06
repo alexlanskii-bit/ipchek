@@ -77,8 +77,12 @@ struct StatusPanel: View {
     let failed = model.addresses.failedRegions
     return Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
       copyableRow("Локальный IP", address.localIP)
-      copyableRow("Внешний IP · Россия", address.russiaIP, failed: failed.contains(.russia))
-      copyableRow("Внешний IP · зарубеж", address.abroadIP, failed: failed.contains(.abroad))
+      copyableRow(
+        "Внешний IP · Россия", address.russiaIP, failed: failed.contains(.russia),
+        country: address.russiaCountry)
+      copyableRow(
+        "Внешний IP · зарубеж", address.abroadIP, failed: failed.contains(.abroad),
+        country: address.abroadCountry)
       row(
         "VPN", address.vpnInterface.map { "включён · \($0)" } ?? "выключен",
         color: address.vpnInterface == nil ? Color.secondary : Color.green)
@@ -97,11 +101,13 @@ struct StatusPanel: View {
     }
   }
 
-  private func copyableRow(_ label: String, _ value: String?, failed: Bool = false) -> some View {
-    GridRow {
+  private func copyableRow(
+    _ label: String, _ value: String?, failed: Bool = false, country: CountryVerdict? = nil
+  ) -> some View {
+    GridRow(alignment: .firstTextBaseline) {
       Text(label)
         .foregroundStyle(.secondary)
-      Group {
+      VStack(alignment: .trailing, spacing: 1) {
         if let value {
           Button {
             NSPasteboard.general.clearContents()
@@ -117,6 +123,19 @@ struct StatusPanel: View {
         } else {
           Text(failed ? "не удалось узнать" : "—")
             .foregroundStyle(.secondary)
+        }
+        // Страна определяется заново по самому IP двумя службами (решение владельца).
+        if value != nil, let country {
+          if let line = CountryText.line(country) {
+            Text(line.text)
+              .font(.caption)
+              .foregroundStyle(Color(nsColor: line.color))
+              .help(line.help)
+          } else {
+            Text("страна — узнаю…")
+              .font(.caption)
+              .foregroundStyle(.tertiary)
+          }
         }
       }
       .gridColumnAlignment(.trailing)

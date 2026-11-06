@@ -22,6 +22,8 @@ final class AddressMonitor {
     didSet { if internetAvailable && !oldValue { refreshRequested = true } }
   }
   @ObservationIgnored private var lastExternalRefresh: Date?
+  /// Что службы сказали о стране каждого внешнего IP: тот же IP — раз в сутки (`CountryPlan`).
+  @ObservationIgnored private var countryCache: [Region: CountryCacheEntry] = [:]
   @ObservationIgnored private var refreshRequested = false
   @ObservationIgnored private var task: Task<Void, Never>?
 
@@ -56,6 +58,8 @@ final class AddressMonitor {
     if !internetAvailable {
       next.russiaIP = nil
       next.abroadIP = nil
+      next.russiaCountry = .unknown
+      next.abroadCountry = .unknown
     } else if refreshRequested
       || AddressPlan.needsExternalRefresh(
         lastRefresh: lastExternalRefresh, now: .now, addressesChanged: addressesChanged)
@@ -73,7 +77,26 @@ final class AddressMonitor {
       )
     }
 
+    if internetAvailable {
+      next.russiaCountry = await country(for: next.russiaIP, region: .russia)
+      next.abroadCountry = await country(for: next.abroadIP, region: .abroad)
+    }
+
     if next != snapshot { snapshot = next }
     onSnapshot?(next)
+  }
+
+  /// Страна IP из кэша; если IP новый, прошли сутки или в прошлый раз службы молчали — спросить.
+  private func country(for ip: String?, region: Region) async -> CountryVerdict {
+    guard let ip else { return .unknown }
+    if CountryPlan.needsLookup(cached: countryCache[region], ip: ip, now: .now) {
+      let verdict = await CountryFetcher.lookup(ip)
+      countryCache[region] = CountryCacheEntry(ip: ip, verdict: verdict, at: .now)
+      // Код страны — не адрес: его в журнал писать можно.
+      Log.address.info(
+        "Страна (\(region.rawValue, privacy: .public)): \(String(describing: verdict), privacy: .public)"
+      )
+    }
+    return countryCache[region]?.verdict ?? .unknown
   }
 }

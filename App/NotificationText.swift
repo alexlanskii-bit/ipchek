@@ -13,15 +13,38 @@ enum NotificationText {
 
   static func content(_ event: AddressEvent) -> Content {
     switch event {
-    case .vpnOn(let interface):
-      Content(title: "VPN включён", body: "Подключение через VPN (\(interface)).")
-    case .vpnOff:
-      Content(title: "VPN отключён", body: "Сайты снова видят ваш настоящий IP.")
-    case .externalIPChanged(let region, let old, let new):
+    case .vpnOn(let interface, let country):
+      Content(
+        title: "VPN включён",
+        body: country.map { "Зарубежные сайты видят вас из страны: \(CountryText.flagName($0))." }
+          ?? "Подключение через VPN (\(interface)).")
+    case .vpnOff(let country):
+      Content(
+        title: "VPN отключён",
+        body: "Сайты снова видят ваш настоящий IP"
+          + (country.map { " — \(CountryText.flagName($0))" } ?? "") + ".")
+    case .externalIPChanged(let region, let old, let new, let country):
       Content(
         title: "Внешний IP изменился",
-        body: "Для \(region == .russia ? "российских" : "зарубежных") сайтов: \(old) → \(new).")
+        body: "Для \(sites(region)) сайтов: \(old) → \(new)"
+          + (country.map { " (\(CountryText.flagName($0)))" } ?? "") + ".")
+    case .countryChanged(let region, let old, let new, let ip):
+      Content(
+        title: "Страна внешнего IP изменилась",
+        body: "Для \(sites(region)) сайтов: \(CountryText.flagName(old)) → "
+          + "\(CountryText.flagName(new))" + (ip.map { " (IP \($0))" } ?? "") + ".")
+    case .countryDisputed(let region, let first, let second, let ip):
+      Content(
+        title: "Службы не согласны о стране IP",
+        body: "Для \(sites(region)) сайтов" + (ip.map { " (IP \($0))" } ?? "") + ": "
+          + "\(CountryPlan.first.name) — \(CountryText.flagName(first)), "
+          + "\(CountryPlan.second.name) — \(CountryText.flagName(second)). "
+          + "Возможна подмена или ошибка базы.")
     }
+  }
+
+  private static func sites(_ region: Region) -> String {
+    region == .russia ? "российских" : "зарубежных"
   }
 
   static func content(_ event: ServerEvent) -> Content {
@@ -40,9 +63,14 @@ enum NotificationText {
   /// Для журнала — без IP-адресов.
   static func logDescription(_ event: AddressEvent) -> String {
     switch event {
-    case .vpnOn(let interface): "VPN включён (\(interface))"
-    case .vpnOff: "VPN отключён"
-    case .externalIPChanged(let region, _, _): "смена внешнего IP (\(region.rawValue))"
+    case .vpnOn(let interface, let country): "VPN включён (\(interface), \(country ?? "страна —"))"
+    case .vpnOff(let country): "VPN отключён (\(country ?? "страна —"))"
+    case .externalIPChanged(let region, _, _, let country):
+      "смена внешнего IP (\(region.rawValue), \(country ?? "страна —"))"
+    case .countryChanged(let region, let old, let new, _):
+      "смена страны (\(region.rawValue)): \(old) → \(new)"
+    case .countryDisputed(let region, let first, let second, _):
+      "службы не согласны (\(region.rawValue)): \(first) / \(second)"
     }
   }
 
