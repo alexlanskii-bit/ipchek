@@ -31,10 +31,10 @@ make run
 Приложение пишет журнал в системный журнал macOS (подсистема `com.lavmoviesstudio.ipchek`, для отладочной версии — `com.lavmoviesstudio.ipchek.dev`).
 
 - **Программа «Консоль»:** нажать «Начать», в поиске ввести `com.lavmoviesstudio.ipchek`.
-- **Терминал**, в реальном времени:
+- **Терминал**, в реальном времени (полный путь `/usr/bin/log` обязателен: в zsh есть встроенная команда `log` с тем же именем):
 
 ```bash
-log stream --predicate 'subsystem BEGINSWITH "com.lavmoviesstudio.ipchek"' --level info
+/usr/bin/log stream --predicate 'subsystem BEGINSWITH "com.lavmoviesstudio.ipchek"' --level info
 ```
 
 В журнал не пишутся адрес сервера в Нидерландах и прочие чувствительные данные.

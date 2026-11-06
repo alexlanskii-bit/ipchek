@@ -8,7 +8,7 @@ import UserNotifications
 @Observable
 final class AppModel {
   private(set) var settings: MonitorSettings
-  private(set) var notificationStatus: NotificationService.Status = .notDetermined
+  private(set) var notificationStatus: NotificationPermission = .notDetermined
   private(set) var isSendingTest = false
   private(set) var lastTestResult: String?
 
@@ -27,7 +27,7 @@ final class AppModel {
     case .notDetermined: "Уведомления: ждём вашего ответа"
     case .allowed: "Уведомления: разрешены"
     case .denied: "Уведомления: запрещены — включите в Системных настройках"
-    case .failed: "Уведомления: macOS не даёт их включить"
+    case .unavailable: "Уведомления: macOS не даёт их включить"
     }
   }
 
@@ -61,7 +61,7 @@ final class AppModel {
       Log.notifications.info("Уведомления разрешены")
     case .denied, .notDetermined:
       Log.notifications.notice("Уведомления не разрешены")
-    case .failed(let reason):
+    case .unavailable(let reason):
       Log.notifications.error(
         "Запрос разрешения на уведомления не удался: \(reason, privacy: .public)")
     }
