@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Секреты и локальные настройки (в проекте их нет, но правило держим всегда)
+.env
+.env.*
+
+# Проект Xcode генерируется XcodeGen из project.yml — в git не храним
+*.xcodeproj/
+*.xcworkspace/
+
+# Сборка
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# Swift Package Manager
+.build/
+.swiftpm/
