@@ -9,7 +9,7 @@ PKG := Packages/IPCheckCore
 FORMAT_PATHS := App $(PKG)/Sources $(PKG)/Tests $(PKG)/Package.swift scripts
 XCODEBUILD := xcodebuild -project $(PROJECT) -scheme $(SCHEME) -derivedDataPath $(DERIVED) -destination 'platform=macOS,arch=arm64' -quiet
 
-.PHONY: help project lint format test build build-release run verify hooks icon clean
+.PHONY: help project lint format test build build-release run install verify hooks icon clean
 
 help: ## Показать команды
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-14s %s\n", $$1, $$2}'
@@ -35,6 +35,19 @@ build-release: project ## Финальная сборка (как будет у�
 
 run: build ## Собрать и запустить отладочную версию
 	@open "$(DERIVED)/Build/Products/Debug/IPCHEK.app"
+
+INSTALLED := /Applications/IPCHEK.app
+RELEASE_APP := $(DERIVED)/Build/Products/Release/IPCHEK.app
+
+install: build-release ## Установить рабочую версию в «Программы» и запустить
+	@test -d "$(RELEASE_APP)" || { echo "Нет сборки $(RELEASE_APP)"; exit 1; }
+	@# Закрываем только установленную копию: отладочная (IPCHEK Dev) живёт отдельно.
+	@pkill -f "^$(INSTALLED)/Contents/MacOS/IPCHEK" && sleep 1 || true
+	@rm -rf "$(INSTALLED)"
+	@ditto "$(RELEASE_APP)" "$(INSTALLED)"
+	@codesign --verify --strict "$(INSTALLED)"
+	@open "$(INSTALLED)"
+	@echo "✅ IPCHEK установлен в «Программы» и запущен"
 
 verify: lint test build build-release ## Все проверки: оформление, тесты, обе сборки
 	@echo "✅ make verify: все проверки пройдены"
