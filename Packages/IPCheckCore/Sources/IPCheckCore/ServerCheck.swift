@@ -111,6 +111,8 @@ public struct ServerEvaluator: Sendable {
   public private(set) var snapshot = ServerSnapshot()
   private let failuresBeforeDown: Int
   private var failuresInRow = 0
+  /// Проверки, начатые раньше этого момента (до пробуждения Mac), не учитываются.
+  private var ignoreChecksBefore: Date?
 
   public init(failuresBeforeDown: Int) {
     self.failuresBeforeDown = max(1, failuresBeforeDown)
@@ -120,10 +122,13 @@ public struct ServerEvaluator: Sendable {
     failuresInRow > 0 && failuresInRow < failuresBeforeDown
   }
 
+  /// `time` — когда проверка началась.
   @discardableResult
   public mutating func record(_ result: ServerProbeResult, internetWorking: Bool, at time: Date)
     -> ServerSnapshot
   {
+    // Начата до пробуждения: ответа не дождалась из-за сна, а не из-за сервера.
+    if let ignoreChecksBefore, time < ignoreChecksBefore { return snapshot }
     // Без домашнего интернета сервер не проверить — его молчание ничего не значит.
     guard internetWorking else {
       failuresInRow = 0
@@ -138,6 +143,16 @@ public struct ServerEvaluator: Sendable {
       failuresInRow += 1
       if failuresInRow >= failuresBeforeDown { setStatus(.unreachable, at: time) }
     }
+    return snapshot
+  }
+
+  /// Mac проснулся: неудачи до сна устарели, состояние сервера — «проверяю» с этого момента.
+  @discardableResult
+  public mutating func systemDidWake(at time: Date) -> ServerSnapshot {
+    failuresInRow = 0
+    ignoreChecksBefore = time
+    snapshot.status = .checking
+    snapshot.since = time
     return snapshot
   }
 
@@ -179,6 +194,12 @@ public struct ServerPolicy: Sendable {
 
   public init() {}
 
+  /// Mac проспал `seconds`: минуты сна не считаются временем, когда сервер молчал.
+  public mutating func excludeSleep(seconds: TimeInterval) {
+    guard seconds > 0 else { return }
+    downSince = downSince?.addingTimeInterval(seconds)
+  }
+
   public mutating func observe(_ snapshot: ServerSnapshot, at time: Date) -> [ServerEvent] {
     switch snapshot.status {
     case .checking, .unknown:
@@ -190,8 +211,10 @@ public struct ServerPolicy: Sendable {
       downSince = nil
       let notified = downNotified
       downNotified = false
+      // Конец сбоя — когда сервер ответил, а не когда мы это увидели (например, после паузы).
+      let answeredAt = snapshot.since ?? time
       return notified
-        ? [.up(downtimeSeconds: max(0, Int(time.timeIntervalSince(since).rounded())))] : []
+        ? [.up(downtimeSeconds: max(0, Int(answeredAt.timeIntervalSince(since).rounded())))] : []
     case .unreachable:
       guard hasSeenReachable, downSince == nil else { return [] }
       downSince = snapshot.since ?? time

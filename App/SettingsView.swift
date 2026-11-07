@@ -35,6 +35,9 @@ struct SettingsView: View {
           Text("О нестабильной связи")
           Text("Не чаще раза в 10 минут")
         }
+        stepper(
+          "После пробуждения Mac молчать", \.wakeGraceSeconds, key: .wakeGraceSeconds, step: 5,
+          unit: "с")
         HStack {
           Text(model.notificationStatusText)
             .foregroundStyle(.secondary)
@@ -81,9 +84,10 @@ struct SettingsView: View {
         .foregroundStyle(.secondary)
       }
 
+      autostartSection
+
       Section("Появится позже") {
         LabeledContent("Хранение истории", value: "этап 6")
-        LabeledContent("Запуск при входе", value: "этап 7")
       }
       .foregroundStyle(.tertiary)
 
@@ -98,8 +102,44 @@ struct SettingsView: View {
     .frame(width: 440)
     .onAppear {
       model.refreshNotificationStatus()
+      model.autostart.refreshJobStatus()
       hostDraft = model.settings.serverHost
     }
+  }
+
+  /// Автозапуск: переключатель хранит выбор, файл задания ставит `make install` (решение 38).
+  private var autostartSection: some View {
+    let autostart = model.autostart
+    return Section("Запуск") {
+      Toggle(
+        isOn: Binding(
+          get: { autostart.launchAtLogin }, set: { autostart.setLaunchAtLogin($0) })
+      ) {
+        Text("Запускать при входе в систему")
+        Text("И перезапускать, если IPCHEK закроется из-за сбоя")
+      }
+      .disabled(!autostart.isAvailable)
+      switch autostart.notice {
+      case .onlyInstalledCopy:
+        caption("Только у версии в «Программах» (make install). У IPCHEK Dev автозапуска нет.")
+      case .runMakeInstall:
+        caption("Файл автозапуска не установлен: выполните make install.")
+      case .disabledInSystemSettings:
+        HStack {
+          caption("Выключено в Системных настройках → Основные → Объекты входа.")
+          Spacer()
+          Button("Открыть") { autostart.openLoginItemsSettings() }
+        }
+      case .appliesAtNextLogin:
+        caption("Действует со следующего входа в систему.")
+      }
+    }
+  }
+
+  private func caption(_ text: String) -> some View {
+    Text(text)
+      .font(.caption)
+      .foregroundStyle(.secondary)
   }
 
   // MARK: - Помощники

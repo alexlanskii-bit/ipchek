@@ -301,6 +301,70 @@ struct ConnectivityEvaluatorTests {
   }
 }
 
+@Suite("Состояние связи после пробуждения Mac")
+struct ConnectivityWakeTests {
+  @Test("Проснулся с Wi-Fi — «проверяю» с момента пробуждения, старая статистика забыта")
+  func wakeStartsFresh() {
+    var evaluator = onlineEvaluator()
+    evaluator.record(round(10, down, ms(20)))  // случайный сбой до сна
+
+    let snapshot = evaluator.systemDidWake(at: at(5000))
+
+    #expect(snapshot.state == .checking)
+    #expect(snapshot.stateSince == at(5000))
+    #expect(snapshot.link == .wifi)
+    #expect(snapshot.latencyMs == nil)
+    #expect(snapshot.lossPercent == nil)
+    #expect(snapshot.russia == nil && snapshot.abroad == nil)
+    #expect(!evaluator.needsConfirmation)
+  }
+
+  @Test("Проснулся без Wi-Fi — «нет интернета» с момента пробуждения, а не с начала сна")
+  func wakeWithoutLink() {
+    var evaluator = onlineEvaluator()
+    evaluator.linkChanged(to: .none, at: at(100))
+
+    let snapshot = evaluator.systemDidWake(at: at(5000))
+
+    #expect(snapshot.state == .offline(.noLink))
+    #expect(snapshot.stateSince == at(5000))
+  }
+
+  @Test("Разрыв до сна не тянется после пробуждения: первая удачная проверка — «работает»")
+  func outageBeforeSleepForgotten() {
+    var evaluator = offlineEvaluator()
+    evaluator.systemDidWake(at: at(5000))
+
+    let snapshot = evaluator.record(round(5001, fast, fast))
+
+    #expect(snapshot.state == .online)
+  }
+
+  @Test("Проверка, начатая до пробуждения, не учитывается")
+  func roundStartedBeforeWakeIgnored() {
+    var evaluator = onlineEvaluator()
+    evaluator.systemDidWake(at: at(5000))
+
+    let snapshot = evaluator.record(round(4999, down, down))
+
+    #expect(snapshot.state == .checking)
+    #expect(snapshot.russia == nil)  // и в панель устаревший результат не попадает
+    #expect(!evaluator.needsConfirmation)
+  }
+
+  @Test("После пробуждения неудачи считаются как обычно: три подряд — разрыв")
+  func outageAfterWakeStillDetected() {
+    var evaluator = onlineEvaluator()
+    evaluator.systemDidWake(at: at(5000))
+
+    for second in [5001.0, 5002, 5003] {
+      evaluator.record(round(second, down, down))
+    }
+
+    #expect(evaluator.snapshot.state == .offline(.serversNotResponding))
+  }
+}
+
 // MARK: - Помощники
 
 private let start = Date(timeIntervalSince1970: 1_800_000_000)

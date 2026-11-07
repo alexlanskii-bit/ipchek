@@ -40,6 +40,13 @@ final class ServerMonitor {
     task = Task { await self.run() }
   }
 
+  /// Mac проснулся: неудачи до сна забыты, проверка — как только появится интернет.
+  func systemDidWake(at time: Date) {
+    snapshot = evaluator.systemDidWake(at: time)
+    onSnapshot?(snapshot)
+    checkNow = true
+  }
+
   func apply(settings newSettings: MonitorSettings) {
     let changed =
       newSettings.serverHost != settings.serverHost
@@ -79,6 +86,8 @@ final class ServerMonitor {
       preferring: lastWorkingStep)
     let interface = directInterface()
     let canCheck = internetWorking && interface != nil
+    // Время начала: проверку, начатую до сна, оценка после пробуждения не учитывает.
+    let startedAt = Date.now
     var result = ServerProbeResult.unreachable
     if canCheck, let interface {
       result = await Self.probe(host: host, steps: steps, via: interface)
@@ -86,7 +95,7 @@ final class ServerMonitor {
     // Пока шла проверка, адрес могли поменять — тогда этот результат уже не про тот сервер.
     guard host == settings.serverHost else { return }
     if case .reachable(_, let step) = result { lastWorkingStep = step }
-    let next = evaluator.record(result, internetWorking: canCheck, at: .now)
+    let next = evaluator.record(result, internetWorking: canCheck, at: startedAt)
     if next.status != snapshot.status {
       // Без адреса сервера: в журнал его не пишем.
       Log.server.notice("Сервер: \(String(describing: next.status), privacy: .public)")

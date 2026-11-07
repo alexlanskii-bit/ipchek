@@ -3,13 +3,15 @@ import SwiftUI
 
 @main
 struct IPCheckApp: App {
-  @State private var model = AppModel()
+  /// Модель живёт в делегате: ему нужны те же данные для окна по клику в Dock и для сна Mac.
+  @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
   var body: some Scene {
-    MenuBarExtra {
-      StatusPanel(model: model)
+    // Копия, которая сразу выйдет (автозапуск выключен человеком), значок не показывает.
+    MenuBarExtra(isInserted: menuBarIconShown) {
+      StatusPanel(model: delegate.model)
     } label: {
-      let snapshot = model.connectivity.snapshot
+      let snapshot = delegate.model.connectivity.snapshot
       // Описание — для VoiceOver: «IPCHEK: Интернет работает».
       MenuBarIcon(
         state: snapshot.state,
@@ -18,7 +20,12 @@ struct IPCheckApp: App {
     .menuBarExtraStyle(.window)
 
     Settings {
-      SettingsView(model: model)
+      SettingsView(model: delegate.model)
     }
+  }
+
+  private var menuBarIconShown: Binding<Bool> {
+    let quits = delegate.model.autostart.launchPlan == .quit
+    return Binding(get: { !quits }, set: { _ in })
   }
 }

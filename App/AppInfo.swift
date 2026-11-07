@@ -17,4 +17,8 @@ enum Log {
   static let connectivity = Logger(subsystem: AppInfo.subsystem, category: "connectivity")
   static let address = Logger(subsystem: AppInfo.subsystem, category: "address")
   static let server = Logger(subsystem: AppInfo.subsystem, category: "server")
+  /// Запуск, автозапуск, передача работы процессу под присмотром macOS, завершение.
+  static let launch = Logger(subsystem: AppInfo.subsystem, category: "launch")
+  /// Сон и пробуждение Mac.
+  static let power = Logger(subsystem: AppInfo.subsystem, category: "power")
 }

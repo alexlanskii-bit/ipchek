@@ -12,6 +12,7 @@ final class AppModel {
   let connectivity: ConnectivityMonitor
   let addresses = AddressMonitor()
   let server: ServerMonitor
+  let autostart = AutostartController()
   private(set) var notificationStatus: NotificationPermission = .notDetermined
   private(set) var isSendingTest = false
   private(set) var lastTestResult: String?
@@ -20,6 +21,12 @@ final class AppModel {
   private var policy = NotificationPolicy()
   private var addressPolicy = AddressPolicy()
   private var serverPolicy = ServerPolicy()
+  /// Сон Mac: пока спит и `wakeGraceSeconds` после пробуждения — без тревог.
+  private var sleepGuard = SleepGuard()
+  /// Показать правилам текущее состояние ещё раз (конец паузы, подтверждение пропажи Wi-Fi).
+  @ObservationIgnored private var recheckTask: Task<Void, Never>?
+  @ObservationIgnored private var recheckAt: Date?
+  @ObservationIgnored private var started = false
   /// Центр уведомлений хранит делегата слабой ссылкой, поэтому держим его здесь.
   private let presenter = NotificationPresenter()
 
@@ -41,10 +48,72 @@ final class AppModel {
     server.directInterface = { [weak connectivity] in connectivity?.primaryNWInterface }
     server.onSnapshot = { [weak self] snapshot in self?.handle(snapshot) }
     server.onReset = { [weak self] in self?.serverPolicy = ServerPolicy() }
+  }
+
+  /// Запуск проверок. Не в `init`: копия, которую macOS запустила при выключенном автозапуске,
+  /// сразу выходит и проверок не начинает.
+  func start() {
+    guard !started else { return }
+    started = true
     connectivity.start()
     addresses.start()
     server.start()
     Task { await requestNotificationPermission() }
+  }
+
+  // MARK: - Сон Mac
+
+  func systemWillSleep() {
+    sleepGuard.willSleep(at: .now)
+    Log.power.notice("Mac засыпает — уведомления на паузе")
+  }
+
+  /// После пробуждения всё, что было до сна, устарело: связь и сервер проверяются заново,
+  /// уведомлений нет `wakeGraceSeconds` (паспорт: 30 с), минуты сна не идут в длительность.
+  func systemDidWake() {
+    let now = Date.now
+    let slept = sleepGuard.didWake(at: now, graceSeconds: settings.wakeGraceSeconds)
+    policy.excludeSleep(seconds: slept)
+    serverPolicy.excludeSleep(seconds: slept)
+    // Есть ли интернет — неизвестно, пока проверки не скажут: старые IP не показываем.
+    addresses.internetAvailable = false
+    server.internetWorking = false
+    connectivity.systemDidWake(at: now)
+    server.systemDidWake(at: now)
+    scheduleRecheck()
+    Log.power.notice(
+      "Mac проснулся после \(Int(slept)) с сна — \(self.settings.wakeGraceSeconds) с без уведомлений"
+    )
+  }
+
+  private func isQuiet() -> Bool {
+    sleepGuard.isQuiet(at: .now)
+  }
+
+  /// Без новых событий правила не спрашиваются: без Wi-Fi проверки не идут, а после паузы
+  /// состояние может не меняться. Поэтому в нужный момент показываем им состояние ещё раз.
+  private func scheduleRecheck() {
+    let now = Date.now
+    let candidates = [policy.recheckAt, sleepGuard.quietUntil].compactMap { $0 }.filter { $0 > now }
+    guard let next = candidates.min() else { return }
+    if let planned = recheckAt, planned > now, planned <= next { return }
+    recheckTask?.cancel()
+    recheckAt = next
+    recheckTask = Task { [weak self] in
+      do {
+        try await Task.sleep(for: .seconds(next.timeIntervalSince(now)))
+      } catch {
+        return  // запланировали другой момент
+      }
+      self?.recheck()
+    }
+  }
+
+  private func recheck() {
+    recheckTask = nil
+    recheckAt = nil
+    handle(connectivity.snapshot)
+    handle(server.snapshot)
   }
 
   var notificationsAllowed: Bool { notificationStatus == .allowed }
@@ -111,6 +180,8 @@ final class AppModel {
       server.internetWorking = false
     case .checking: break
     }
+    defer { scheduleRecheck() }
+    guard !isQuiet() else { return }
     let events = policy.observe(snapshot, at: .now, notifyUnstable: settings.notifyUnstable)
     for event in events {
       Log.notifications.notice("Событие: \(String(describing: event), privacy: .public)")
@@ -119,6 +190,9 @@ final class AppModel {
   }
 
   private func handle(_ snapshot: AddressSnapshot) {
+    // После паузы правила сравнят новое состояние с тем, что было до сна: VPN, не вернувшийся
+    // за паузу, или новый IP всё равно придут уведомлением.
+    guard !isQuiet() else { return }
     let events = addressPolicy.observe(snapshot, at: .now)
     for event in events {
       // Без самих адресов: в журнал IP не пишем.
@@ -129,6 +203,7 @@ final class AppModel {
   }
 
   private func handle(_ snapshot: ServerSnapshot) {
+    guard !isQuiet() else { return }
     let events = serverPolicy.observe(snapshot, at: .now)
     for event in events {
       Log.notifications.notice("Событие: сервер — \(String(describing: event), privacy: .public)")

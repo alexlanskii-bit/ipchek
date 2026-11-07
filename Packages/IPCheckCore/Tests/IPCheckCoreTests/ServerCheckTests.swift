@@ -154,6 +154,33 @@ struct ServerEvaluatorTests {
     evaluator.record(.unreachable, internetWorking: true, at: at(17))
     #expect(!evaluator.needsConfirmation)
   }
+
+  @Test("После пробуждения — «проверяю» с этого момента, неудачи до сна забыты")
+  func wakeStartsFresh() {
+    var evaluator = ServerEvaluator(failuresBeforeDown: 3)
+    evaluator.record(ok(40), internetWorking: true, at: at(0))
+    evaluator.record(.unreachable, internetWorking: true, at: at(15))
+    evaluator.record(.unreachable, internetWorking: true, at: at(16))
+
+    let snapshot = evaluator.systemDidWake(at: at(5000))
+    let afterWake = evaluator.record(.unreachable, internetWorking: true, at: at(5001))
+
+    #expect(snapshot.status == .checking)
+    #expect(snapshot.since == at(5000))
+    #expect(afterWake.status == .checking)  // одна неудача после сна — ещё не приговор
+  }
+
+  @Test("Проверка, начатая до пробуждения, не учитывается")
+  func checkStartedBeforeWakeIgnored() {
+    var evaluator = ServerEvaluator(failuresBeforeDown: 1)
+    evaluator.record(ok(40), internetWorking: true, at: at(0))
+    evaluator.systemDidWake(at: at(5000))
+
+    let snapshot = evaluator.record(.unreachable, internetWorking: true, at: at(4990))
+
+    #expect(snapshot.status == .checking)
+    #expect(!evaluator.needsConfirmation)
+  }
 }
 
 @Suite("Уведомления о сервере")
@@ -215,6 +242,29 @@ struct ServerPolicyTests {
     #expect(again.isEmpty)
     #expect(upAgain.isEmpty)
     #expect(later == [.down])  // ровно 600 с после первого
+  }
+
+  @Test("Сбой сервера до сна — «снова отвечает» без минут сна")
+  func downtimeExcludesSleep() {
+    var policy = livePolicy()
+    _ = policy.observe(snap(.unreachable, since: 30), at: at(30))
+
+    policy.excludeSleep(seconds: 3600)
+    let events = policy.observe(
+      snap(.reachable(latencyMs: 40, via: .tcp(port: 443)), since: 3700), at: at(3700))
+
+    #expect(events == [.up(downtimeSeconds: 70)])
+  }
+
+  @Test("Длительность — до момента, когда сервер ответил, а не когда это заметили")
+  func downtimeEndsWhenAnswered() {
+    var policy = livePolicy()
+    _ = policy.observe(snap(.unreachable, since: 30), at: at(30))
+
+    let events = policy.observe(
+      snap(.reachable(latencyMs: 40, via: .tcp(port: 443)), since: 90), at: at(120))
+
+    #expect(events == [.up(downtimeSeconds: 60)])
   }
 
   @Test("Состояние не изменилось — тишина")

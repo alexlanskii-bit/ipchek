@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Автозапуск IPCHEK (этап 7, docs/DECISIONS.md — решение 38). Команда `make install` копирует
+	этот файл в ~/Library/LaunchAgents/com.lavmoviesstudio.ipchek.autostart.plist (scripts/autostart.sh).
+	launchd запускает рабочую версию при входе в систему и перезапускает её после сбоя.
+	-->
+	<key>Label</key>
+	<string>com.lavmoviesstudio.ipchek.autostart</string>
+	<!-- Рабочая версия, которую ставит make install. Путь обычный: подпись сборки не важна. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Applications/IPCHEK.app/Contents/MacOS/IPCHEK</string>
+	</array>
+	<!-- По этой метке IPCHEK понимает, что его запустила macOS, а не человек. -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>IPCHEK_LAUNCHED_BY</key>
+		<string>agent</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Перезапуск только после сбоя: штатный выход («Выйти», выключение Mac) — код 0. -->
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<!-- Без этого launchd урезал бы процессору и диску ресурсы, как фоновой службе. -->
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<!-- Только в обычном сеансе с экраном: значок в строке меню и уведомления. -->
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<!-- В Системных настройках → Объекты входа запись показывается под именем IPCHEK. -->
+	<key>AssociatedBundleIdentifiers</key>
+	<string>com.lavmoviesstudio.ipchek</string>
+</dict>
+</plist>

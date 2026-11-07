@@ -33,6 +33,12 @@ final class ConnectivityMonitor {
     update(evaluator.update(settings: newSettings))
   }
 
+  /// Mac проснулся: оценка начинается заново, проверка — сразу.
+  func systemDidWake(at time: Date) {
+    update(evaluator.systemDidWake(at: time))
+    roundRequested = true
+  }
+
   func start() {
     guard tasks.isEmpty else { return }
     tasks = [

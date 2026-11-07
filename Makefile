@@ -39,15 +39,21 @@ run: build ## Собрать и запустить отладочную верс
 INSTALLED := /Applications/IPCHEK.app
 RELEASE_APP := $(DERIVED)/Build/Products/Release/IPCHEK.app
 
-install: build-release ## Установить рабочую версию в «Программы» и запустить
+INSTALLED_ID := com.lavmoviesstudio.ipchek
+
+install: build-release ## Установить рабочую версию в «Программы», включить автозапуск и запустить
 	@test -d "$(RELEASE_APP)" || { echo "Нет сборки $(RELEASE_APP)"; exit 1; }
-	@# Закрываем только установленную копию: отладочная (IPCHEK Dev) живёт отдельно.
-	@pkill -f "^$(INSTALLED)/Contents/MacOS/IPCHEK" && sleep 1 || true
+	@# Закрываем штатно, как «Выйти», только рабочую версию: IPCHEK Dev живёт отдельно.
+	@# Сначала копию под присмотром macOS (иначе launchd запустил бы её снова), потом остальные.
+	@scripts/autostart.sh stop
+	@scripts/stop-app.sh $(INSTALLED_ID)
 	@rm -rf "$(INSTALLED)"
 	@ditto "$(RELEASE_APP)" "$(INSTALLED)"
 	@codesign --verify --strict "$(INSTALLED)"
-	@open "$(INSTALLED)"
-	@echo "✅ IPCHEK установлен в «Программы» и запущен"
+	@# Файл автозапуска в ~/Library/LaunchAgents (решение владельца 2026-11-07) и запуск
+	@# под присмотром macOS: при входе в систему и после сбоя IPCHEK запустится сам.
+	@scripts/autostart.sh start
+	@echo "✅ IPCHEK установлен в «Программы», автозапуск включён, IPCHEK запущен"
 
 verify: lint test build build-release ## Все проверки: оформление, тесты, обе сборки
 	@echo "✅ make verify: все проверки пройдены"

@@ -29,6 +29,7 @@ struct NotificationPolicyTests {
   func restoredWithDowntime() {
     var policy = workingPolicy()
     _ = policy.observe(snap(.offline(.noLink), since: 20), at: at(20))
+    _ = policy.observe(snap(.offline(.noLink), since: 20), at: at(25))  // подтверждено таймером
     _ = policy.observe(snap(.checking, since: 30), at: at(30))
 
     let events = policy.observe(snap(.online, since: 35), at: at(35))
@@ -143,6 +144,131 @@ struct NotificationPolicyTests {
     let events = policy.observe(snap(.online, since: 5), at: at(10))
 
     #expect(events.isEmpty)
+  }
+
+  @Test("Длительность — до момента, когда связь вернулась, а не когда это заметили")
+  func downtimeEndsWhenRestored() {
+    var policy = workingPolicy()
+    _ = policy.observe(snap(.offline(.serversNotResponding), since: 20), at: at(20))
+
+    let events = policy.observe(snap(.online, since: 50), at: at(80))
+
+    #expect(events == [.restored(downtimeSeconds: 30)])
+  }
+}
+
+@Suite("Пропажа Wi-Fi или кабеля: уведомление через 5 секунд (решение владельца)")
+struct LinkLossConfirmationTests {
+  @Test("Wi-Fi пропал и вернулся меньше чем за 5 секунд (смена сети) — ни «пропал», ни «вернулся»")
+  func shortLinkLossIsSilent() {
+    var policy = workingPolicy()
+
+    let events = [
+      policy.observe(snap(.offline(.noLink), since: 20, link: LinkStatus.none), at: at(20)),
+      policy.observe(snap(.offline(.noLink), since: 20, link: LinkStatus.none), at: at(24.9)),
+      policy.observe(snap(.checking, since: 23), at: at(24.9)),
+      policy.observe(snap(.online, since: 30), at: at(30)),
+    ]
+
+    #expect(events.allSatisfy { $0.isEmpty })
+  }
+
+  @Test("Wi-Fi не вернулся за 5 секунд — «пропал»; длительность — с момента пропажи")
+  func confirmedAfterFiveSeconds() {
+    var policy = workingPolicy()
+    _ = policy.observe(snap(.offline(.noLink), since: 20, link: LinkStatus.none), at: at(20))
+
+    let outage = policy.observe(
+      snap(.offline(.noLink), since: 20, link: LinkStatus.none), at: at(25))
+    let restored = policy.observe(snap(.online, since: 60), at: at(60))
+
+    #expect(outage == [.outage(.noLink, link: LinkStatus.none)])
+    #expect(restored == [.restored(downtimeSeconds: 40)])
+  }
+
+  @Test("Пока ждём подтверждения — известно, когда спросить снова; после решения — нет")
+  func recheckTime() {
+    var policy = workingPolicy()
+    #expect(policy.recheckAt == nil)
+
+    _ = policy.observe(snap(.offline(.noLink), since: 20, link: LinkStatus.none), at: at(20))
+    #expect(policy.recheckAt == at(25))
+
+    _ = policy.observe(snap(.offline(.noLink), since: 20, link: LinkStatus.none), at: at(25))
+    #expect(policy.recheckAt == nil)
+  }
+
+  @Test("Wi-Fi вернулся до подтверждения — спрашивать снова не нужно")
+  func recheckClearedWhenLinkBack() {
+    var policy = workingPolicy()
+    _ = policy.observe(snap(.offline(.noLink), since: 20, link: LinkStatus.none), at: at(20))
+
+    _ = policy.observe(snap(.checking, since: 22), at: at(22))
+
+    #expect(policy.recheckAt == nil)
+  }
+
+  @Test("Серверы не отвечают при живом Wi-Fi — уведомление сразу, без ожидания")
+  func serverOutageNotDelayed() {
+    var policy = workingPolicy()
+
+    let events = policy.observe(snap(.offline(.serversNotResponding), since: 20), at: at(20))
+
+    #expect(events == [.outage(.serversNotResponding, link: .wifi)])
+    #expect(policy.recheckAt == nil)
+  }
+
+  @Test("При запуске без Wi-Fi ждать нечего — уведомлений и проверок по таймеру нет")
+  func noRecheckAtStartup() {
+    var policy = NotificationPolicy()
+    _ = policy.observe(snap(.offline(.noLink), since: 0, link: LinkStatus.none), at: at(0))
+
+    #expect(policy.recheckAt == nil)
+  }
+}
+
+@Suite("Минуты сна не считаются разрывом")
+struct NotificationSleepTests {
+  @Test("Разрыв до сна — «вернулся» с длительностью без минут сна")
+  func outageExcludesSleep() {
+    var policy = workingPolicy()
+    _ = policy.observe(snap(.offline(.serversNotResponding), since: 20), at: at(20))
+
+    policy.excludeSleep(seconds: 3600)  // Mac спал час
+    let events = policy.observe(snap(.online, since: 3700), at: at(3700))
+
+    #expect(events == [.restored(downtimeSeconds: 80)])
+  }
+
+  @Test("«Часть сайтов недоступна» до сна — «снова доступны» без минут сна")
+  func partialExcludesSleep() {
+    var policy = workingPolicy()
+    _ = policy.observe(snap(.partial(reachable: .russia), since: 50), at: at(50))
+
+    policy.excludeSleep(seconds: 1000)
+    let events = policy.observe(snap(.online, since: 1100), at: at(1100))
+
+    #expect(events == [.partialResolved(unreachable: .abroad, downtimeSeconds: 50)])
+  }
+
+  @Test("Без разрыва сон ничего не меняет")
+  func noEpisodeNoChange() {
+    var policy = workingPolicy()
+
+    policy.excludeSleep(seconds: 600)
+    let events = policy.observe(snap(.online, since: 5), at: at(700))
+
+    #expect(events.isEmpty)
+  }
+
+  @Test("Ожидание подтверждения пропажи Wi-Fi сдвигается на время сна")
+  func pendingLinkLossShifted() {
+    var policy = workingPolicy()
+    _ = policy.observe(snap(.offline(.noLink), since: 20, link: LinkStatus.none), at: at(20))
+
+    policy.excludeSleep(seconds: 100)
+
+    #expect(policy.recheckAt == at(125))
   }
 }
 

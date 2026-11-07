@@ -111,6 +111,8 @@ public struct ConnectivityEvaluator: Sendable {
   private var goodRoundsInRow = 0
   private var regionFailuresInRow: [Region: Int] = [:]
   private var recovering = false
+  /// Проверки, начатые раньше этого момента (до пробуждения Mac), не учитываются.
+  private var ignoreRoundsBefore: Date?
 
   private struct Sample: Sendable {
     let at: Date
@@ -169,6 +171,8 @@ public struct ConnectivityEvaluator: Sendable {
 
   @discardableResult
   public mutating func record(_ round: CheckRound) -> ConnectivitySnapshot {
+    // Начата до пробуждения: ответа не дождалась из-за сна, а не из-за сети.
+    if let ignoreRoundsBefore, round.at < ignoreRoundsBefore { return snapshot }
     snapshot.russia = round.russia
     snapshot.abroad = round.abroad
     snapshot.updatedAt = round.at
@@ -204,6 +208,24 @@ public struct ConnectivityEvaluator: Sendable {
       recovering = false
     }
     setState(qualityState(), at: round.at)
+    return snapshot
+  }
+
+  /// Mac проснулся: всё, что было до сна, — устарело. Начинаем как при запуске, но Wi-Fi/кабель
+  /// помним: о них macOS сообщает сама. Неудачи, накопленные во сне, и статистика за минуту до сна
+  /// не превращаются в «разрыв» или «нестабильно».
+  @discardableResult
+  public mutating func systemDidWake(at time: Date) -> ConnectivitySnapshot {
+    samples = []
+    resetCounters()
+    recovering = false
+    ignoreRoundsBefore = time
+    updateQualityNumbers()  // без проверок — ни задержки, ни потерь
+    snapshot.russia = nil
+    snapshot.abroad = nil
+    snapshot.updatedAt = time
+    snapshot.state = snapshot.link == LinkStatus.none ? .offline(.noLink) : .checking
+    snapshot.stateSince = time  // минуты сна в длительность не идут
     return snapshot
   }
 
