@@ -5,6 +5,27 @@
 .env
 .env.*
 
+# Ключи, сертификаты и профили подписи — не должны попасть в открытый репозиторий
+*.pem
+*.key
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+id_rsa*
+id_ed25519*
+credentials*.json
+
+# Логи, базы данных (в том числе история SwiftData), бэкапы и архивы
+*.log
+*.sql
+*.sqlite*
+*.db
+*.store*
+*.bak
+*.zip
+
 # Проект Xcode генерируется XcodeGen из project.yml — в git не храним
 *.xcodeproj/
 *.xcworkspace/
